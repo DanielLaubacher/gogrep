@@ -1,4 +1,4 @@
-.PHONY: build test bench lint install clean
+.PHONY: build test bench profile lint install clean
 
 GOEXPERIMENT ?= simd
 
@@ -11,6 +11,9 @@ test:
 
 bench:
 	GOEXPERIMENT=$(GOEXPERIMENT) go test -bench=. -benchmem ./internal/matcher/ ./internal/input/ ./internal/simd/
+
+profile:
+	./scripts/profile.sh
 
 lint:
 	GOEXPERIMENT=$(GOEXPERIMENT) go vet ./...

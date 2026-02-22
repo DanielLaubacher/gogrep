@@ -1,7 +1,6 @@
 package output
 
 import (
-	"fmt"
 	"strconv"
 
 	"github.com/dl/gogrep/internal/matcher"
@@ -9,7 +8,6 @@ import (
 
 // TextFormatter formats results as human-readable text with optional color.
 type TextFormatter struct {
-	styles      Styles
 	lineNumbers bool
 	countOnly   bool
 	filesOnly   bool
@@ -17,9 +15,8 @@ type TextFormatter struct {
 }
 
 // NewTextFormatter creates a TextFormatter.
-func NewTextFormatter(styles Styles, lineNumbers bool, countOnly bool, filesOnly bool, useColor bool) *TextFormatter {
+func NewTextFormatter(lineNumbers bool, countOnly bool, filesOnly bool, useColor bool) *TextFormatter {
 	return &TextFormatter{
-		styles:      styles,
 		lineNumbers: lineNumbers,
 		countOnly:   countOnly,
 		filesOnly:   filesOnly,
@@ -27,22 +24,26 @@ func NewTextFormatter(styles Styles, lineNumbers bool, countOnly bool, filesOnly
 	}
 }
 
-func (f *TextFormatter) Format(result Result, multiFile bool) []byte {
+func (f *TextFormatter) Format(buf []byte, result Result, multiFile bool) []byte {
 	if f.filesOnly {
 		if len(result.Matches) > 0 {
-			return append([]byte(result.FilePath), '\n')
+			buf = append(buf, result.FilePath...)
+			buf = append(buf, '\n')
+			return buf
 		}
-		return nil
+		return buf
 	}
 
 	if f.countOnly {
 		if multiFile {
-			return []byte(fmt.Sprintf("%s:%d\n", result.FilePath, len(result.Matches)))
+			buf = append(buf, result.FilePath...)
+			buf = append(buf, ':')
 		}
-		return []byte(strconv.Itoa(len(result.Matches)) + "\n")
+		buf = strconv.AppendInt(buf, int64(len(result.Matches)), 10)
+		buf = append(buf, '\n')
+		return buf
 	}
 
-	var buf []byte
 	for _, m := range result.Matches {
 		buf = f.formatLine(buf, result.FilePath, m, multiFile)
 	}
@@ -50,39 +51,37 @@ func (f *TextFormatter) Format(result Result, multiFile bool) []byte {
 }
 
 func (f *TextFormatter) formatLine(buf []byte, filePath string, m matcher.Match, multiFile bool) []byte {
+	sep := ":"
+	if m.IsContext {
+		sep = "-"
+	}
+
 	// Filename prefix
 	if multiFile {
 		if f.useColor {
-			buf = append(buf, f.styles.Filename.Render(filePath)...)
+			buf = append(buf, ansiMagenta...)
+			buf = append(buf, filePath...)
+			buf = append(buf, ansiReset...)
+			buf = append(buf, ansiCyan...)
+			buf = append(buf, sep...)
+			buf = append(buf, ansiReset...)
 		} else {
 			buf = append(buf, filePath...)
-		}
-		sep := ":"
-		if m.IsContext {
-			sep = "-"
-		}
-		if f.useColor {
-			buf = append(buf, f.styles.Separator.Render(sep)...)
-		} else {
 			buf = append(buf, sep...)
 		}
 	}
 
 	// Line number
 	if f.lineNumbers {
-		numStr := strconv.Itoa(m.LineNum)
 		if f.useColor {
-			buf = append(buf, f.styles.LineNum.Render(numStr)...)
+			buf = append(buf, ansiGreen...)
+			buf = strconv.AppendInt(buf, int64(m.LineNum), 10)
+			buf = append(buf, ansiReset...)
+			buf = append(buf, ansiCyan...)
+			buf = append(buf, sep...)
+			buf = append(buf, ansiReset...)
 		} else {
-			buf = append(buf, numStr...)
-		}
-		sep := ":"
-		if m.IsContext {
-			sep = "-"
-		}
-		if f.useColor {
-			buf = append(buf, f.styles.Separator.Render(sep)...)
-		} else {
+			buf = strconv.AppendInt(buf, int64(m.LineNum), 10)
 			buf = append(buf, sep...)
 		}
 	}
@@ -111,7 +110,9 @@ func (f *TextFormatter) highlightMatches(buf []byte, line []byte, positions [][2
 		if start > prev {
 			buf = append(buf, line[prev:start]...)
 		}
-		buf = append(buf, f.styles.Match.Render(string(line[start:end]))...)
+		buf = append(buf, ansiBoldRed...)
+		buf = append(buf, line[start:end]...)
+		buf = append(buf, ansiReset...)
 		prev = end
 	}
 	if prev < len(line) {

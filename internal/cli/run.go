@@ -50,13 +50,7 @@ func Run(cfg Config) int {
 	if cfg.JSONOutput {
 		formatter = output.NewJSONFormatter()
 	} else {
-		var styles output.Styles
-		if useColor {
-			styles = output.NewStyles()
-		} else {
-			styles = output.NoStyles()
-		}
-		formatter = output.NewTextFormatter(styles, cfg.LineNumbers, cfg.CountOnly, cfg.FileNamesOnly, useColor)
+		formatter = output.NewTextFormatter(cfg.LineNumbers, cfg.CountOnly, cfg.FileNamesOnly, useColor)
 	}
 
 	reader := input.NewAdaptiveReader(cfg.MmapThreshold)
@@ -84,7 +78,8 @@ func Run(cfg Config) int {
 func runStdin(reader input.Reader, m matcher.Matcher, formatter output.Formatter, w *output.Writer) int {
 	result := searchReader(reader, "", m)
 	if len(result.Matches) > 0 {
-		w.Write(formatter.Format(result, false))
+		buf := formatter.Format(nil, result, false)
+		w.Write(buf)
 		return 0
 	}
 	return 1
@@ -93,6 +88,7 @@ func runStdin(reader input.Reader, m matcher.Matcher, formatter output.Formatter
 func runFiles(paths []string, m matcher.Matcher, reader input.Reader, formatter output.Formatter, w *output.Writer, logger *log.Logger) int {
 	multiFile := len(paths) > 1
 	hasMatch := false
+	var buf []byte
 
 	for _, path := range paths {
 		result := searchReader(reader, path, m)
@@ -103,8 +99,8 @@ func runFiles(paths []string, m matcher.Matcher, reader input.Reader, formatter 
 		if len(result.Matches) > 0 {
 			hasMatch = true
 		}
-		data := formatter.Format(result, multiFile)
-		w.Write(data)
+		buf = formatter.Format(buf[:0], result, multiFile)
+		w.Write(buf)
 	}
 
 	if hasMatch {
@@ -188,7 +184,8 @@ func runWatch(paths []string, m matcher.Matcher, formatter output.Formatter, w *
 					FilePath: evt.Path,
 					Matches:  matches,
 				}
-				w.Write(formatter.Format(result, true))
+				buf := formatter.Format(nil, result, true)
+				w.Write(buf)
 			}
 
 		case watch.EventCreated:

@@ -1,6 +1,14 @@
 # gogrep
 
+> **v0.0.1** | **Experimental** — APIs and flags may change without notice.
+
 A high-performance grep alternative written in pure Go, designed exclusively for Linux AMD64. Uses raw Linux syscalls, AVX2 SIMD acceleration, and memory-mapped I/O to maximize search throughput.
+
+<p align="center">
+  <img src="https://static.wikia.nocookie.net/arrow/images/2/24/Vibe_with_his_powers_restored.png" alt="Vibe" width="300">
+</p>
+
+Built in ~4 hours of vibe coding with [Claude Code](https://claude.com/claude-code).
 
 ## Features
 
@@ -50,6 +58,9 @@ make test
 
 # Run benchmarks
 make bench
+
+# Profile against ripgrep
+make profile
 
 # Lint
 make lint

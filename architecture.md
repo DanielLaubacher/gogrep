@@ -53,9 +53,10 @@ In recursive mode, a **Scheduler** (worker pool) sits between the Walker and Mat
 1. Open directory with `unix.Open(path, O_RDONLY | O_DIRECTORY | O_NOATIME, 0)`.
 2. Read entries with `unix.Getdents(fd, buf)` into a 32 KB buffer.
 3. Parse raw `linux_dirent64` structs in-place (`unsafe.Pointer`). Each entry's `d_type` field classifies it as `DT_REG`, `DT_DIR`, `DT_LNK`, or `DT_UNKNOWN` without any `stat` syscall.
-4. Regular files: call `unix.Fstatat(dirfd, name, ...)` relative to the open directory fd to get size. This avoids full path resolution through the VFS.
-5. Directories: recurse. Skip `.git`, `.svn`, `.hg`, `node_modules`, hidden dirs (`.` prefix).
+4. Regular files: emit path-only `FileEntry{Path}` — file opening and stat are deferred to the reader.
+5. Directories: recurse with a parallel BFS (`NumCPU` walker goroutines). Skip `.git`, `.svn`, `.hg`, `node_modules`, hidden dirs (`.` prefix).
 6. `DT_UNKNOWN` (rare, some filesystems like XFS): fall back to `fstatat` to determine type.
+7. `.gitignore` support: loads and stacks ignore rules per directory, matching patterns against relative paths.
 
 **Result**: eliminates one `lstat` per file. On a tree with 100K files, that's 100K fewer syscalls compared to `filepath.WalkDir`.
 
@@ -90,9 +91,12 @@ An `AdaptiveReader` automatically selects between the two based on a configurabl
 ```go
 type Matcher interface {
     FindAll(data []byte) []Match
+    MatchExists(data []byte) bool
     FindLine(line []byte, lineNum int, byteOffset int64) (Match, bool)
 }
 ```
+
+`MatchExists` provides a fast path for `-l` / `--files-with-matches` mode, skipping line boundary extraction entirely.
 
 ### Selection Logic
 
@@ -134,13 +138,13 @@ Case-insensitive search broadcasts both lower and upper forms of the first/last 
 
 ### Text Formatter
 
-Uses `charmbracelet/lipgloss` for styling:
-- Filenames: magenta
-- Line numbers: green
-- Separators: cyan
-- Matches: bold red
+Uses raw ANSI escape codes for zero-allocation coloring:
+- Filenames: `\x1b[35m` magenta
+- Line numbers: `\x1b[32m` green
+- Separators: `\x1b[36m` cyan
+- Matches: `\x1b[1;31m` bold red
 
-Color mode is auto-detected via `unix.IoctlGetTermios(fd, TCGETS)` (raw TTY detection, no external package).
+Color mode is auto-detected via `unix.IoctlGetTermios(fd, TCGETS)` (raw TTY detection, no external package). Output buffer is pre-allocated based on match count to avoid `growslice` overhead.
 
 ### JSON Formatter
 
@@ -201,6 +205,5 @@ stdout
 | `golang.org/x/sys` | Linux syscalls (getdents, openat, mmap, writev, inotify, epoll) |
 | `github.com/spf13/cobra` | CLI framework |
 | `go.elara.ws/pcre` | Pure Go PCRE2 port (no cgo) |
-| `github.com/charmbracelet/lipgloss` | Terminal styling for match highlighting |
 | `github.com/charmbracelet/log` | Structured stderr logging |
 | `simd/archsimd` | Go 1.26 experimental AVX2 intrinsics |

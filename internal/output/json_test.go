@@ -22,7 +22,7 @@ func TestJSONFormatter_BasicMatch(t *testing.T) {
 		},
 	}
 
-	got := string(f.Format(result, false))
+	got := string(f.Format(nil, result, false))
 	lines := strings.Split(strings.TrimSpace(got), "\n")
 	if len(lines) != 1 {
 		t.Fatalf("got %d lines, want 1", len(lines))
@@ -57,7 +57,7 @@ func TestJSONFormatter_MultipleMatches(t *testing.T) {
 		},
 	}
 
-	got := string(f.Format(result, true))
+	got := string(f.Format(nil, result, true))
 	lines := strings.Split(strings.TrimSpace(got), "\n")
 	if len(lines) != 2 {
 		t.Fatalf("got %d lines, want 2", len(lines))
@@ -83,7 +83,7 @@ func TestJSONFormatter_ContextLinesSkipped(t *testing.T) {
 		},
 	}
 
-	got := string(f.Format(result, false))
+	got := string(f.Format(nil, result, false))
 	lines := strings.Split(strings.TrimSpace(got), "\n")
 	if len(lines) != 1 {
 		t.Fatalf("got %d lines, want 1 (context should be skipped)", len(lines))
@@ -97,7 +97,7 @@ func TestJSONFormatter_NoMatches(t *testing.T) {
 		Matches:  nil,
 	}
 
-	got := f.Format(result, false)
+	got := f.Format(nil, result, false)
 	if got != nil {
 		t.Errorf("got %q, want nil for no matches", got)
 	}
@@ -118,7 +118,7 @@ func TestJSONFormatter_MatchPositions(t *testing.T) {
 		},
 	}
 
-	got := string(f.Format(result, false))
+	got := string(f.Format(nil, result, false))
 	var jm map[string]interface{}
 	if err := json.Unmarshal([]byte(strings.TrimSpace(got)), &jm); err != nil {
 		t.Fatalf("invalid JSON: %v", err)

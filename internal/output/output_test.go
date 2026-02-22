@@ -7,7 +7,7 @@ import (
 )
 
 func TestTextFormatter_SingleFile(t *testing.T) {
-	f := NewTextFormatter(NoStyles(), true, false, false, false)
+	f := NewTextFormatter(true, false, false, false)
 	result := Result{
 		FilePath: "test.txt",
 		Matches: []matcher.Match{
@@ -16,7 +16,7 @@ func TestTextFormatter_SingleFile(t *testing.T) {
 		},
 	}
 
-	got := string(f.Format(result, false))
+	got := string(f.Format(nil, result, false))
 	want := "1:hello world\n3:hello again\n"
 	if got != want {
 		t.Errorf("got %q, want %q", got, want)
@@ -24,7 +24,7 @@ func TestTextFormatter_SingleFile(t *testing.T) {
 }
 
 func TestTextFormatter_MultiFile(t *testing.T) {
-	f := NewTextFormatter(NoStyles(), true, false, false, false)
+	f := NewTextFormatter(true, false, false, false)
 	result := Result{
 		FilePath: "test.txt",
 		Matches: []matcher.Match{
@@ -32,7 +32,7 @@ func TestTextFormatter_MultiFile(t *testing.T) {
 		},
 	}
 
-	got := string(f.Format(result, true))
+	got := string(f.Format(nil, result, true))
 	want := "test.txt:5:match line\n"
 	if got != want {
 		t.Errorf("got %q, want %q", got, want)
@@ -40,43 +40,42 @@ func TestTextFormatter_MultiFile(t *testing.T) {
 }
 
 func TestTextFormatter_CountOnly(t *testing.T) {
-	f := NewTextFormatter(NoStyles(), false, true, false, false)
+	f := NewTextFormatter(false, true, false, false)
 	result := Result{
 		FilePath: "test.txt",
 		Matches:  make([]matcher.Match, 3),
 	}
 
 	// Single file
-	got := string(f.Format(result, false))
+	got := string(f.Format(nil, result, false))
 	if got != "3\n" {
 		t.Errorf("count single: got %q, want %q", got, "3\n")
 	}
 
 	// Multi file
-	got = string(f.Format(result, true))
+	got = string(f.Format(nil, result, true))
 	if got != "test.txt:3\n" {
 		t.Errorf("count multi: got %q, want %q", got, "test.txt:3\n")
 	}
 }
 
 func TestTextFormatter_FilesOnly(t *testing.T) {
-	f := NewTextFormatter(NoStyles(), false, false, true, false)
+	f := NewTextFormatter(false, false, true, false)
 
 	// Has matches
 	result := Result{
 		FilePath: "test.txt",
 		Matches:  make([]matcher.Match, 1),
 	}
-	got := string(f.Format(result, true))
+	got := string(f.Format(nil, result, true))
 	if got != "test.txt\n" {
 		t.Errorf("got %q, want %q", got, "test.txt\n")
 	}
 
 	// No matches
 	result.Matches = nil
-	got = string(f.Format(result, true))
+	got = string(f.Format(nil, result, true))
 	if got != "" {
 		t.Errorf("got %q, want empty", got)
 	}
 }
-

@@ -3,6 +3,7 @@ package walker
 import (
 	"runtime"
 	"sync"
+	"unsafe"
 
 	"golang.org/x/sys/unix"
 )
@@ -280,11 +281,22 @@ func (pw *parallelWalker) processDir(item walkItem, buf []byte, dirents []Dirent
 // joinPath concatenates a directory and entry name with a single separator.
 // Avoids filepath.Join overhead (no Clean, no validation) since we control
 // the inputs: dirPath is always a valid directory path, name is a plain filename.
+// Uses a single allocation via make+copy instead of string concatenation.
 func joinPath(dirPath, name string) string {
-	if len(dirPath) > 0 && dirPath[len(dirPath)-1] == '/' {
-		return dirPath + name
+	needsSep := len(dirPath) == 0 || dirPath[len(dirPath)-1] != '/'
+	n := len(dirPath) + len(name)
+	if needsSep {
+		n++
 	}
-	return dirPath + "/" + name
+	buf := make([]byte, n)
+	copy(buf, dirPath)
+	i := len(dirPath)
+	if needsSep {
+		buf[i] = '/'
+		i++
+	}
+	copy(buf[i:], name)
+	return unsafe.String(&buf[0], len(buf))
 }
 
 // skipDir returns true for directories that should be skipped.

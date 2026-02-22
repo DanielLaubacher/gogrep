@@ -51,10 +51,12 @@ func NewOrderedWriter(w *Writer, f Formatter, multiFile bool) *OrderedWriter {
 }
 
 // WriteOrdered consumes results from the channel, buffering out-of-order results
-// and writing them in sequence-number order.
+// and writing them in sequence-number order. Reuses a single format buffer
+// across all writes to avoid per-file allocation.
 func (ow *OrderedWriter) WriteOrdered(results <-chan Result, onMatch func()) {
 	nextSeq := 1
 	pending := make(map[int]Result)
+	var buf []byte // reused across all writeResult calls
 
 	for r := range results {
 		if r.Err == nil && len(r.Matches) > 0 {
@@ -64,12 +66,12 @@ func (ow *OrderedWriter) WriteOrdered(results <-chan Result, onMatch func()) {
 		}
 
 		if r.SeqNum == nextSeq {
-			ow.writeResult(r)
+			buf = ow.writeResult(buf, r)
 			nextSeq++
 			// Flush any consecutive pending results
 			for {
 				if p, ok := pending[nextSeq]; ok {
-					ow.writeResult(p)
+					buf = ow.writeResult(buf, p)
 					delete(pending, nextSeq)
 					nextSeq++
 				} else {
@@ -82,10 +84,11 @@ func (ow *OrderedWriter) WriteOrdered(results <-chan Result, onMatch func()) {
 	}
 }
 
-func (ow *OrderedWriter) writeResult(r Result) {
+func (ow *OrderedWriter) writeResult(buf []byte, r Result) []byte {
 	if r.Err != nil {
-		return
+		return buf
 	}
-	data := ow.formatter.Format(r, ow.multiFile)
-	ow.writer.Write(data)
+	buf = ow.formatter.Format(buf[:0], r, ow.multiFile)
+	ow.writer.Write(buf)
+	return buf
 }

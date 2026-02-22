@@ -27,12 +27,11 @@ type jsonPos struct {
 	End   int `json:"end"`
 }
 
-func (f *JSONFormatter) Format(result Result, multiFile bool) []byte {
+func (f *JSONFormatter) Format(buf []byte, result Result, multiFile bool) []byte {
 	if len(result.Matches) == 0 {
-		return nil
+		return buf
 	}
 
-	var buf []byte
 	for _, m := range result.Matches {
 		if m.IsContext {
 			continue
@@ -56,3 +55,6 @@ func (f *JSONFormatter) Format(result Result, multiFile bool) []byte {
 	}
 	return buf
 }
+
+// Ensure JSONFormatter implements Formatter.
+var _ Formatter = (*JSONFormatter)(nil)
