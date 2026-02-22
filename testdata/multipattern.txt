@@ -1,0 +1,7 @@
+apple is a fruit
+banana is yellow
+cherry is red
+apple and banana together
+date is sweet
+elderberry is rare
+fig is small

@@ -1,0 +1,101 @@
+# gogrep
+
+A high-performance grep alternative written in pure Go, designed exclusively for Linux AMD64. Uses raw Linux syscalls, AVX2 SIMD acceleration, and memory-mapped I/O to maximize search throughput.
+
+## Features
+
+- **AVX2 SIMD search** — fixed-string patterns use a SIMD-friendly Horspool algorithm that compares 32 byte positions per iteration
+- **Search-then-split** — searches the entire file buffer first, then extracts line boundaries only around matches (avoids per-line overhead)
+- **Memory-mapped I/O** — large files are mmap'd with `MAP_POPULATE` + `MADV_SEQUENTIAL` for zero-copy search
+- **Raw syscalls** — `getdents64`, `openat`, `fstatat`, `pread`, `writev`, `inotify`, `epoll` — no portable Go abstractions
+- **Parallel recursive search** — worker pool distributes files across `NumCPU * 2` goroutines with deterministic output ordering
+- **Multiple pattern engines** — Go regex (RE2), PCRE2 (pure Go port), Boyer-Moore with SIMD, Aho-Corasick multi-pattern
+- **Watch mode** — inotify + epoll file watching with log rotation handling
+- **JSON output** — JSON Lines format for programmatic consumption
+- **Pure Go, no cgo** — no C bindings or assembly files
+
+## Requirements
+
+- **Go 1.26+** with `GOEXPERIMENT=simd`
+- **Linux AMD64** (x86-64 with AVX2 — Intel Haswell+ or AMD Excavator+)
+- `golang.org/x/sys` for Linux syscall bindings
+
+## Building
+
+```sh
+# Build
+GOEXPERIMENT=simd go build -o bin/gogrep ./cmd/gogrep
+
+# Or use make
+make build
+```
+
+## Installation
+
+```sh
+GOEXPERIMENT=simd go install github.com/dl/gogrep/cmd/gogrep@latest
+```
+
+Or with make:
+
+```sh
+make install
+```
+
+## Testing
+
+```sh
+# Run all tests (PCRE tests run separately due to -race incompatibility)
+make test
+
+# Run benchmarks
+make bench
+
+# Lint
+make lint
+```
+
+## Usage
+
+```
+gogrep [OPTIONS] PATTERN [FILE...]
+gogrep [OPTIONS] -e PATTERN [-e PATTERN...] [FILE...]
+```
+
+If no files are given, reads from stdin.
+
+```sh
+# Basic search
+gogrep "error" app.log
+
+# Case-insensitive, recursive, with line numbers
+gogrep -rin "fixme" ./src/
+
+# Fixed string with SIMD acceleration
+gogrep -F "[ERROR]" app.log
+
+# Multiple patterns (Aho-Corasick)
+gogrep -F -e "timeout" -e "refused" -e "EOF" app.log
+
+# PCRE2 regex with lookbehind
+gogrep -P '(?<=error:\s)\w+' app.log
+
+# Context lines
+gogrep -C3 "panic" app.log
+
+# Watch mode
+gogrep --watch "ERROR" /var/log/syslog
+
+# JSON output
+gogrep --json "error" app.log
+```
+
+See [help.md](help.md) for the full flag reference and more examples.
+
+## Architecture
+
+See [architecture.md](architecture.md) for detailed design documentation covering the pipeline, syscall usage, SIMD algorithms, concurrency model, and key constants.
+
+## License
+
+MIT

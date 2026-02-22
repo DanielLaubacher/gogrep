@@ -1,0 +1,25 @@
+# Binaries
+bin/
+gogrep
+*.exe
+
+# Test artifacts
+*.test
+*.out
+coverage.html
+coverage.txt
+
+# Profiling
+*.prof
+*.pprof
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
