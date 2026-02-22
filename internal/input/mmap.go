@@ -99,20 +99,6 @@ func (r *adaptiveReader) Read(path string) (ReadResult, error) {
 	return readBuffered(fd, size)
 }
 
-// ReadFromFd reads from a pre-opened fd with known size.
-// Skips open and fstat — the walker already did both via openat.
-// Takes ownership of fd: closes it on error or via ReadResult.Closer.
-func (r *adaptiveReader) ReadFromFd(fd int, size int64) (ReadResult, error) {
-	if size == 0 {
-		unix.Close(fd)
-		return ReadResult{Data: nil, Closer: noopCloser}, nil
-	}
-	if size >= r.threshold {
-		return readMmap(fd, size, "")
-	}
-	return readBuffered(fd, size)
-}
-
 // openFile opens a file with O_NOATIME, falling back without it.
 func openFile(path string) (int, error) {
 	fd, err := unix.Open(path, unix.O_RDONLY|unix.O_NOATIME, 0)

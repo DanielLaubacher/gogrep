@@ -13,10 +13,3 @@ func noopCloser() error { return nil }
 type Reader interface {
 	Read(path string) (ReadResult, error)
 }
-
-// FdReader reads from a pre-opened file descriptor with known size.
-// This avoids redundant open+fstat syscalls when the walker has already
-// opened the file with openat and knows its size.
-type FdReader interface {
-	ReadFromFd(fd int, size int64) (ReadResult, error)
-}

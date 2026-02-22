@@ -7,7 +7,10 @@
       "Bash(go build:*)",
       "Bash(./bin/gogrep:*)",
       "Bash(go test:*)",
-      "Bash(go vet:*)"
+      "Bash(go vet:*)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:man7.org)",
+      "WebFetch(domain:raw.githubusercontent.com)"
     ]
   }
 }

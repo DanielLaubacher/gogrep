@@ -9,9 +9,7 @@ import (
 
 // FileEntry represents a file discovered during directory traversal.
 type FileEntry struct {
-	Path string // full path for display
-	Size int64
-	Fd   int // pre-opened fd from openat, or -1 if not available
+	Path string
 }
 
 // WalkOptions configures directory traversal behavior.
@@ -41,7 +39,7 @@ func Walk(roots []string, opts WalkOptions) (<-chan FileEntry, <-chan error) {
 					continue
 				}
 				if stat.Mode&unix.S_IFMT == unix.S_IFREG {
-					fileCh <- FileEntry{Path: root, Size: stat.Size, Fd: -1}
+					fileCh <- FileEntry{Path: root}
 				}
 			}
 			return
@@ -205,11 +203,7 @@ func (pw *parallelWalker) processDir(item walkItem, buf []byte, dirents []Dirent
 				if item.ignores != nil && isIgnoredByLayers(item.ignores, fullPath, false) {
 					continue
 				}
-				fileFd, stat, err := pw.openatFile(fd, entry.Name, fullPath)
-				if err != nil {
-					continue
-				}
-				pw.fileCh <- FileEntry{Path: fullPath, Size: stat.Size, Fd: fileFd}
+				pw.fileCh <- FileEntry{Path: fullPath}
 
 			case DT_LNK:
 				var stat unix.Stat_t
@@ -223,13 +217,7 @@ func (pw *parallelWalker) processDir(item walkItem, buf []byte, dirents []Dirent
 					if item.ignores != nil && isIgnoredByLayers(item.ignores, fullPath, false) {
 						continue
 					}
-					// openat follows symlinks by default, so this opens the target
-					fileFd, err := openatFile2(fd, entry.Name)
-					if err != nil {
-						pw.errCh <- &WalkError{Path: fullPath, Err: err}
-						continue
-					}
-					pw.fileCh <- FileEntry{Path: fullPath, Size: stat.Size, Fd: fileFd}
+					pw.fileCh <- FileEntry{Path: fullPath}
 				} else if stat.Mode&unix.S_IFMT == unix.S_IFDIR {
 					if skipDir(entry.Name, pw.hidden) {
 						continue
@@ -247,32 +235,21 @@ func (pw *parallelWalker) processDir(item walkItem, buf []byte, dirents []Dirent
 				}
 
 			case DT_UNKNOWN:
-				// Open first to get fd, then fstat to determine type.
-				// This avoids a separate fstatat + later open in the reader.
-				fileFd, err := openatFile2(fd, entry.Name)
-				if err != nil {
-					pw.errCh <- &WalkError{Path: fullPath, Err: err}
-					continue
-				}
 				var stat unix.Stat_t
-				if err := unix.Fstat(fileFd, &stat); err != nil {
-					unix.Close(fileFd)
+				if err := unix.Stat(fullPath, &stat); err != nil {
 					pw.errCh <- &WalkError{Path: fullPath, Err: err}
 					continue
 				}
 				mode := stat.Mode & unix.S_IFMT
 				if mode == unix.S_IFREG {
 					if !pw.hidden && len(entry.Name) > 0 && entry.Name[0] == '.' {
-						unix.Close(fileFd)
 						continue
 					}
 					if item.ignores != nil && isIgnoredByLayers(item.ignores, fullPath, false) {
-						unix.Close(fileFd)
 						continue
 					}
-					pw.fileCh <- FileEntry{Path: fullPath, Size: stat.Size, Fd: fileFd}
+					pw.fileCh <- FileEntry{Path: fullPath}
 				} else if mode == unix.S_IFDIR {
-					unix.Close(fileFd) // not useful for directory traversal
 					if skipDir(entry.Name, pw.hidden) {
 						continue
 					}
@@ -286,8 +263,6 @@ func (pw *parallelWalker) processDir(item walkItem, buf []byte, dirents []Dirent
 						childIgnores[len(item.ignores)] = loadIgnoreLayer(fullPath)
 					}
 					subdirs = append(subdirs, walkItem{path: fullPath, ignores: childIgnores})
-				} else {
-					unix.Close(fileFd) // not a file or directory
 				}
 			}
 		}
@@ -300,32 +275,6 @@ func (pw *parallelWalker) processDir(item walkItem, buf []byte, dirents []Dirent
 		pw.enqueue(sub)
 	}
 	return dirents
-}
-
-// openatFile opens a file relative to dirfd using openat, then fstats it.
-// Returns the fd, stat result, and any error. On error, no fd is leaked.
-func (pw *parallelWalker) openatFile(dirfd int, name string, fullPath string) (int, unix.Stat_t, error) {
-	fileFd, err := openatFile2(dirfd, name)
-	if err != nil {
-		pw.errCh <- &WalkError{Path: fullPath, Err: err}
-		return -1, unix.Stat_t{}, err
-	}
-	var stat unix.Stat_t
-	if err := unix.Fstat(fileFd, &stat); err != nil {
-		unix.Close(fileFd)
-		pw.errCh <- &WalkError{Path: fullPath, Err: err}
-		return -1, unix.Stat_t{}, err
-	}
-	return fileFd, stat, nil
-}
-
-// openatFile2 opens a file relative to dirfd, falling back without O_NOATIME.
-func openatFile2(dirfd int, name string) (int, error) {
-	fileFd, err := unix.Openat(dirfd, name, unix.O_RDONLY|unix.O_NOATIME, 0)
-	if err != nil {
-		fileFd, err = unix.Openat(dirfd, name, unix.O_RDONLY, 0)
-	}
-	return fileFd, err
 }
 
 // joinPath concatenates a directory and entry name with a single separator.

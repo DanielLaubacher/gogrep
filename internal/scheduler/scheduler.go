@@ -5,8 +5,6 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"golang.org/x/sys/unix"
-
 	"github.com/dl/gogrep/internal/input"
 	"github.com/dl/gogrep/internal/matcher"
 	"github.com/dl/gogrep/internal/output"
@@ -18,8 +16,7 @@ type Scheduler struct {
 	workers   int
 	matcher   matcher.Matcher
 	reader    input.Reader
-	fdReader  input.FdReader // nil if reader doesn't support pre-opened fds
-	filesOnly bool           // when true, use MatchExists for faster -l mode
+	filesOnly bool // when true, use MatchExists for faster -l mode
 }
 
 // New creates a Scheduler with the given number of workers.
@@ -29,16 +26,12 @@ func New(workers int, m matcher.Matcher, r input.Reader, filesOnly bool) *Schedu
 	if workers <= 0 {
 		workers = runtime.NumCPU() * 2
 	}
-	s := &Scheduler{
+	return &Scheduler{
 		workers:   workers,
 		matcher:   m,
 		reader:    r,
 		filesOnly: filesOnly,
 	}
-	if fr, ok := r.(input.FdReader); ok {
-		s.fdReader = fr
-	}
-	return s
 }
 
 // Run processes files from the file channel and returns results on the result channel.
@@ -72,17 +65,7 @@ func (s *Scheduler) Run(files <-chan walker.FileEntry) <-chan output.Result {
 func (s *Scheduler) processFile(entry walker.FileEntry) output.Result {
 	result := output.Result{FilePath: entry.Path}
 
-	var readResult input.ReadResult
-	var err error
-	if s.fdReader != nil && entry.Fd >= 0 {
-		// Fast path: walker pre-opened the file with openat, skip open+fstat
-		readResult, err = s.fdReader.ReadFromFd(entry.Fd, entry.Size)
-	} else {
-		if entry.Fd >= 0 {
-			unix.Close(entry.Fd) // close unused pre-opened fd
-		}
-		readResult, err = s.reader.Read(entry.Path)
-	}
+	readResult, err := s.reader.Read(entry.Path)
 	if err != nil {
 		result.Err = err
 		return result
