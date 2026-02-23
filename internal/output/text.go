@@ -40,11 +40,15 @@ func (f *TextFormatter) Format(buf []byte, result Result, multiFile bool) []byte
 	}
 
 	if f.countOnly {
+		count := result.Count()
+		if count == 0 {
+			return buf
+		}
 		if multiFile {
 			buf = append(buf, result.FilePath...)
 			buf = append(buf, ':')
 		}
-		buf = strconv.AppendInt(buf, int64(result.Count()), 10)
+		buf = strconv.AppendInt(buf, int64(count), 10)
 		buf = append(buf, '\n')
 		return buf
 	}
