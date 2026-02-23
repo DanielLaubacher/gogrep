@@ -10,15 +10,15 @@ import (
 
 func TestJSONFormatter_BasicMatch(t *testing.T) {
 	f := NewJSONFormatter()
+	data := []byte("hello world\n")
 	result := Result{
 		FilePath: "test.txt",
-		Matches: []matcher.Match{
-			{
-				LineNum:    1,
-				LineBytes:  []byte("hello world"),
-				ByteOffset: 0,
-				Positions:  [][2]int{{0, 5}},
+		MatchSet: matcher.MatchSet{
+			Data: data,
+			Matches: []matcher.Match{
+				{LineNum: 1, LineStart: 0, LineLen: 11, ByteOffset: 0, PosIdx: 0, PosCount: 1},
 			},
+			Positions: [][2]int{{0, 5}},
 		},
 	}
 
@@ -49,11 +49,16 @@ func TestJSONFormatter_BasicMatch(t *testing.T) {
 
 func TestJSONFormatter_MultipleMatches(t *testing.T) {
 	f := NewJSONFormatter()
+	data := []byte("first\n???????????????\nthird\n")
 	result := Result{
 		FilePath: "test.txt",
-		Matches: []matcher.Match{
-			{LineNum: 1, LineBytes: []byte("first"), ByteOffset: 0, Positions: [][2]int{{0, 5}}},
-			{LineNum: 3, LineBytes: []byte("third"), ByteOffset: 20, Positions: [][2]int{{0, 5}}},
+		MatchSet: matcher.MatchSet{
+			Data: data,
+			Matches: []matcher.Match{
+				{LineNum: 1, LineStart: 0, LineLen: 5, ByteOffset: 0, PosIdx: 0, PosCount: 1},
+				{LineNum: 3, LineStart: 22, LineLen: 5, ByteOffset: 20, PosIdx: 1, PosCount: 1},
+			},
+			Positions: [][2]int{{0, 5}, {0, 5}},
 		},
 	}
 
@@ -74,12 +79,17 @@ func TestJSONFormatter_MultipleMatches(t *testing.T) {
 
 func TestJSONFormatter_ContextLinesSkipped(t *testing.T) {
 	f := NewJSONFormatter()
+	data := []byte("context\nmatch\ncontext\n")
 	result := Result{
 		FilePath: "test.txt",
-		Matches: []matcher.Match{
-			{LineNum: 1, LineBytes: []byte("context"), IsContext: true},
-			{LineNum: 2, LineBytes: []byte("match"), Positions: [][2]int{{0, 5}}},
-			{LineNum: 3, LineBytes: []byte("context"), IsContext: true},
+		MatchSet: matcher.MatchSet{
+			Data: data,
+			Matches: []matcher.Match{
+				{LineNum: 1, LineStart: 0, LineLen: 7, IsContext: true},
+				{LineNum: 2, LineStart: 8, LineLen: 5, PosIdx: 0, PosCount: 1},
+				{LineNum: 3, LineStart: 14, LineLen: 7, IsContext: true},
+			},
+			Positions: [][2]int{{0, 5}},
 		},
 	}
 
@@ -94,7 +104,6 @@ func TestJSONFormatter_NoMatches(t *testing.T) {
 	f := NewJSONFormatter()
 	result := Result{
 		FilePath: "test.txt",
-		Matches:  nil,
 	}
 
 	got := f.Format(nil, result, false)
@@ -103,18 +112,17 @@ func TestJSONFormatter_NoMatches(t *testing.T) {
 	}
 }
 
-
 func TestJSONFormatter_MatchPositions(t *testing.T) {
 	f := NewJSONFormatter()
+	data := []byte("hello world hello\n")
 	result := Result{
 		FilePath: "test.txt",
-		Matches: []matcher.Match{
-			{
-				LineNum:    1,
-				LineBytes:  []byte("hello world hello"),
-				ByteOffset: 0,
-				Positions:  [][2]int{{0, 5}, {12, 17}},
+		MatchSet: matcher.MatchSet{
+			Data: data,
+			Matches: []matcher.Match{
+				{LineNum: 1, LineStart: 0, LineLen: 17, ByteOffset: 0, PosIdx: 0, PosCount: 2},
 			},
+			Positions: [][2]int{{0, 5}, {12, 17}},
 		},
 	}
 

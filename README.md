@@ -8,7 +8,7 @@ A high-performance grep alternative written in pure Go, designed exclusively for
   <img src="https://static.wikia.nocookie.net/arrow/images/2/24/Vibe_with_his_powers_restored.png" alt="Vibe" width="300">
 </p>
 
-Built in ~4 hours of vibe coding with [Claude Code](https://claude.com/claude-code).
+Built vibe coding with [Claude Code](https://claude.com/claude-code).
 
 ## Features
 

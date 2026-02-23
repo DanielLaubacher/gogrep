@@ -13,10 +13,12 @@ type acNode struct {
 // AhoCorasickMatcher matches multiple fixed patterns simultaneously
 // using the Aho-Corasick algorithm.
 type AhoCorasickMatcher struct {
-	root       *acNode
-	patterns   [][]byte // original patterns
-	ignoreCase bool
-	invert     bool
+	root         *acNode
+	patterns     [][]byte // original patterns
+	ignoreCase   bool
+	invert       bool
+	maxCols      int
+	needLineNums bool
 }
 
 // NewAhoCorasickMatcher creates an AhoCorasickMatcher for multiple fixed patterns.
@@ -163,7 +165,26 @@ func (m *AhoCorasickMatcher) MatchExists(data []byte) bool {
 	return false
 }
 
-func (m *AhoCorasickMatcher) FindAll(data []byte) []Match {
+func (m *AhoCorasickMatcher) CountAll(data []byte) int {
+	if m.invert {
+		return countInvert(data, func(line []byte) bool {
+			return len(m.searchLine(line)) == 0
+		})
+	}
+
+	acMatches := m.searchLine(data)
+	if len(acMatches) == 0 {
+		return 0
+	}
+
+	locs := make([][]int, len(acMatches))
+	for i, am := range acMatches {
+		locs[i] = []int{am.offset, am.offset + am.length}
+	}
+	return countLocsUniqueLines(data, locs)
+}
+
+func (m *AhoCorasickMatcher) FindAll(data []byte) MatchSet {
 	if m.invert {
 		return m.findAllInvert(data)
 	}
@@ -171,77 +192,56 @@ func (m *AhoCorasickMatcher) FindAll(data []byte) []Match {
 	// Search whole buffer with automaton
 	acMatches := m.searchLine(data)
 	if len(acMatches) == 0 {
-		return nil
+		return MatchSet{}
 	}
 
-	cursor := newLineCursor(data)
-	matches := make([]Match, 0, len(acMatches))
-	allPos := make([][2]int, 0, len(acMatches))
-	lastLineStart := int64(-1)
-	posStart := 0
-
-	for _, am := range acMatches {
-		line, lineOffset, lineNum := cursor.lineFromPos(am.offset)
-
-		posInLine := am.offset - int(lineOffset)
-		posEnd := posInLine + am.length
-
-		allPos = append(allPos, [2]int{posInLine, posEnd})
-
-		if lineOffset == lastLineStart {
-			last := &matches[len(matches)-1]
-			last.Positions = allPos[posStart:]
-		} else {
-			posStart = len(allPos) - 1
-			matches = append(matches, Match{
-				LineNum:    lineNum,
-				LineBytes:  line,
-				ByteOffset: lineOffset,
-				Positions:  allPos[posStart:],
-			})
-			lastLineStart = lineOffset
-		}
+	// Convert to locs format for shared line resolution
+	locs := make([][]int, len(acMatches))
+	for i, am := range acMatches {
+		locs[i] = []int{am.offset, am.offset + am.length}
 	}
-
-	return matches
+	return matchSetFromLocs(data, locs, m.maxCols, m.needLineNums)
 }
 
-func (m *AhoCorasickMatcher) findAllInvert(data []byte) []Match {
-	var matches []Match
+func (m *AhoCorasickMatcher) findAllInvert(data []byte) MatchSet {
+	ms := MatchSet{Data: data}
 	var offset int64
 	lineNum := 1
+	remaining := data
 
-	for len(data) > 0 {
-		idx := bytes.IndexByte(data, '\n')
-		var line []byte
+	for len(remaining) > 0 {
+		idx := bytes.IndexByte(remaining, '\n')
+		var lineLen int
 		if idx >= 0 {
-			line = data[:idx]
-			data = data[idx+1:]
+			lineLen = idx
 		} else {
-			line = data
-			data = nil
+			lineLen = len(remaining)
 		}
+		lineStart := int(offset)
+		line := remaining[:lineLen]
 
 		if len(m.searchLine(line)) == 0 {
-			matches = append(matches, Match{
+			ms.Matches = append(ms.Matches, Match{
 				LineNum:    lineNum,
-				LineBytes:  line,
+				LineStart:  lineStart,
+				LineLen:    lineLen,
 				ByteOffset: offset,
 			})
 		}
 
-		offset += int64(len(line)) + 1
+		if idx >= 0 {
+			remaining = remaining[idx+1:]
+		} else {
+			remaining = nil
+		}
+		offset += int64(lineLen) + 1
 		lineNum++
 	}
 
-	return matches
+	return ms
 }
 
-func (m *AhoCorasickMatcher) FindLine(line []byte, lineNum int, byteOffset int64) (Match, bool) {
-	return m.findInLine(line, lineNum, byteOffset)
-}
-
-func (m *AhoCorasickMatcher) findInLine(line []byte, lineNum int, byteOffset int64) (Match, bool) {
+func (m *AhoCorasickMatcher) FindLine(line []byte, lineNum int, byteOffset int64) (MatchSet, bool) {
 	acMatches := m.searchLine(line)
 	hasMatch := len(acMatches) > 0
 
@@ -250,20 +250,25 @@ func (m *AhoCorasickMatcher) findInLine(line []byte, lineNum int, byteOffset int
 	}
 
 	if !hasMatch {
-		return Match{}, false
+		return MatchSet{}, false
 	}
 
+	ms := MatchSet{Data: line}
 	match := Match{
 		LineNum:    lineNum,
-		LineBytes:  line,
+		LineStart:  0,
+		LineLen:    len(line),
 		ByteOffset: byteOffset,
 	}
 	if !m.invert {
-		match.Positions = make([][2]int, len(acMatches))
+		match.PosIdx = 0
+		match.PosCount = len(acMatches)
+		ms.Positions = make([][2]int, len(acMatches))
 		for i, am := range acMatches {
-			match.Positions[i] = [2]int{am.offset, am.offset + am.length}
+			ms.Positions[i] = [2]int{am.offset, am.offset + am.length}
 		}
 	}
+	ms.Matches = []Match{match}
 
-	return match, true
+	return ms, true
 }

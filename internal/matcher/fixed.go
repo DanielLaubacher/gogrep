@@ -27,39 +27,88 @@ func NewFixedMatcher(pattern string, ignoreCase bool, invert bool) *FixedMatcher
 	}
 }
 
-func (m *FixedMatcher) FindAll(data []byte) []Match {
-	var matches []Match
-	var offset int64
-	lineNum := 1
+func (m *FixedMatcher) MatchExists(data []byte) bool {
+	if m.invert {
+		return len(data) > 0
+	}
+	if m.ignoreCase {
+		return bytes.Contains(bytes.ToLower(data), m.patternLow)
+	}
+	return bytes.Contains(data, m.pattern)
+}
 
-	for len(data) > 0 {
-		idx := bytes.IndexByte(data, '\n')
+func (m *FixedMatcher) CountAll(data []byte) int {
+	count := 0
+	remaining := data
+	for len(remaining) > 0 {
+		idx := bytes.IndexByte(remaining, '\n')
 		var line []byte
 		if idx >= 0 {
-			line = data[:idx]
-			data = data[idx+1:]
+			line = remaining[:idx]
+			remaining = remaining[idx+1:]
 		} else {
-			line = data
-			data = nil
+			line = remaining
+			remaining = nil
 		}
-
-		match, ok := m.findInLine(line, lineNum, offset)
+		_, ok := m.findInLine(line, 0, 0)
 		if ok {
-			matches = append(matches, match)
+			count++
+		}
+	}
+	return count
+}
+
+func (m *FixedMatcher) FindAll(data []byte) MatchSet {
+	ms := MatchSet{Data: data}
+	var offset int64
+	lineNum := 1
+	remaining := data
+
+	for len(remaining) > 0 {
+		idx := bytes.IndexByte(remaining, '\n')
+		var lineLen int
+		if idx >= 0 {
+			lineLen = idx
+		} else {
+			lineLen = len(remaining)
+		}
+		lineStart := int(offset)
+		line := remaining[:lineLen]
+
+		lineMS, ok := m.findInLine(line, lineNum, offset)
+		if ok {
+			// Re-base positions into the shared positions array
+			posIdx := len(ms.Positions)
+			innerPositions := lineMS.MatchPositions(0)
+			ms.Positions = append(ms.Positions, innerPositions...)
+
+			ms.Matches = append(ms.Matches, Match{
+				LineNum:    lineNum,
+				LineStart:  lineStart,
+				LineLen:    lineLen,
+				ByteOffset: offset,
+				PosIdx:     posIdx,
+				PosCount:   len(innerPositions),
+			})
 		}
 
-		offset += int64(len(line)) + 1
+		if idx >= 0 {
+			remaining = remaining[idx+1:]
+		} else {
+			remaining = nil
+		}
+		offset += int64(lineLen) + 1
 		lineNum++
 	}
 
-	return matches
+	return ms
 }
 
-func (m *FixedMatcher) FindLine(line []byte, lineNum int, byteOffset int64) (Match, bool) {
+func (m *FixedMatcher) FindLine(line []byte, lineNum int, byteOffset int64) (MatchSet, bool) {
 	return m.findInLine(line, lineNum, byteOffset)
 }
 
-func (m *FixedMatcher) findInLine(line []byte, lineNum int, byteOffset int64) (Match, bool) {
+func (m *FixedMatcher) findInLine(line []byte, lineNum int, byteOffset int64) (MatchSet, bool) {
 	searchLine := line
 	pattern := m.pattern
 	if m.ignoreCase {
@@ -88,17 +137,22 @@ func (m *FixedMatcher) findInLine(line []byte, lineNum int, byteOffset int64) (M
 	}
 
 	if !hasMatch {
-		return Match{}, false
+		return MatchSet{}, false
 	}
 
+	ms := MatchSet{Data: line}
 	match := Match{
 		LineNum:    lineNum,
-		LineBytes:  line,
+		LineStart:  0,
+		LineLen:    len(line),
 		ByteOffset: byteOffset,
 	}
 	if !m.invert {
-		match.Positions = positions
+		match.PosIdx = 0
+		match.PosCount = len(positions)
+		ms.Positions = positions
 	}
+	ms.Matches = []Match{match}
 
-	return match, true
+	return ms, true
 }

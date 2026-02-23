@@ -5,13 +5,19 @@ import (
 	"strings"
 )
 
+// MatcherOpts holds display-related options that affect match extraction.
+type MatcherOpts struct {
+	MaxCols      int  // max columns for snippet extraction (0 = full lines)
+	NeedLineNums bool // compute line numbers (false = skip for speed)
+}
+
 // NewMatcher creates the appropriate Matcher based on the provided options.
 // Selection logic:
 //   - PCRE flag -> PCREMatcher (PCRE2 via pure Go port)
 //   - Fixed + 1 pattern -> BoyerMooreMatcher (sublinear search)
 //   - Fixed + N patterns -> AhoCorasickMatcher (single-pass multi-pattern)
 //   - Otherwise -> RegexMatcher (RE2)
-func NewMatcher(patterns []string, fixed bool, usePCRE bool, ignoreCase bool, invert bool) (Matcher, error) {
+func NewMatcher(patterns []string, fixed bool, usePCRE bool, ignoreCase bool, invert bool, opts MatcherOpts) (Matcher, error) {
 	if len(patterns) == 0 {
 		return nil, fmt.Errorf("no patterns provided")
 	}
@@ -29,19 +35,30 @@ func NewMatcher(patterns []string, fixed bool, usePCRE bool, ignoreCase bool, in
 			}
 			pattern = combined
 		}
-		return NewPCREMatcher(pattern, ignoreCase, invert)
+		m, err := NewPCREMatcher(pattern, ignoreCase, invert)
+		if err != nil {
+			return nil, err
+		}
+		m.maxCols = opts.MaxCols
+		m.needLineNums = opts.NeedLineNums
+		return m, nil
 	}
 
 	if fixed {
 		if len(patterns) == 1 {
-			return NewBoyerMooreMatcher(patterns[0], ignoreCase, invert), nil
+			m := NewBoyerMooreMatcher(patterns[0], ignoreCase, invert)
+			m.maxCols = opts.MaxCols
+			m.needLineNums = opts.NeedLineNums
+			return m, nil
 		}
-		return NewAhoCorasickMatcher(patterns, ignoreCase, invert), nil
+		m := NewAhoCorasickMatcher(patterns, ignoreCase, invert)
+		m.maxCols = opts.MaxCols
+		m.needLineNums = opts.NeedLineNums
+		return m, nil
 	}
 
 	// Optimization: if all patterns are literal strings (no regex metacharacters),
 	// use BoyerMooreMatcher / AhoCorasickMatcher for SIMD-accelerated search.
-	// This is the same optimization ripgrep does — detect literals and bypass the regex engine.
 	allLiteral := true
 	for _, p := range patterns {
 		if !isLiteral(p) {
@@ -51,9 +68,15 @@ func NewMatcher(patterns []string, fixed bool, usePCRE bool, ignoreCase bool, in
 	}
 	if allLiteral {
 		if len(patterns) == 1 {
-			return NewBoyerMooreMatcher(patterns[0], ignoreCase, invert), nil
+			m := NewBoyerMooreMatcher(patterns[0], ignoreCase, invert)
+			m.maxCols = opts.MaxCols
+			m.needLineNums = opts.NeedLineNums
+			return m, nil
 		}
-		return NewAhoCorasickMatcher(patterns, ignoreCase, invert), nil
+		m := NewAhoCorasickMatcher(patterns, ignoreCase, invert)
+		m.maxCols = opts.MaxCols
+		m.needLineNums = opts.NeedLineNums
+		return m, nil
 	}
 
 	// Regex mode: combine multiple patterns with |
@@ -69,7 +92,13 @@ func NewMatcher(patterns []string, fixed bool, usePCRE bool, ignoreCase bool, in
 		pattern = combined
 	}
 
-	return NewRegexMatcher(pattern, ignoreCase, invert)
+	m, err := NewRegexMatcher(pattern, ignoreCase, invert)
+	if err != nil {
+		return nil, err
+	}
+	m.maxCols = opts.MaxCols
+	m.needLineNums = opts.NeedLineNums
+	return m, nil
 }
 
 // isLiteral returns true if the pattern contains no regex metacharacters

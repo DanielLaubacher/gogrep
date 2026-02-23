@@ -9,9 +9,11 @@ import (
 // PCREMatcher matches using PCRE2-compatible regexes via the pure Go pcre package.
 // Supports lookahead, lookbehind, backreferences, atomic groups, and all PCRE2 features.
 type PCREMatcher struct {
-	re         *pcre.Regexp
-	ignoreCase bool
-	invert     bool
+	re           *pcre.Regexp
+	ignoreCase   bool
+	invert       bool
+	maxCols      int
+	needLineNums bool
 }
 
 // NewPCREMatcher creates a PCREMatcher from a PCRE2 pattern string.
@@ -40,93 +42,70 @@ func (m *PCREMatcher) MatchExists(data []byte) bool {
 	return m.re.Match(data)
 }
 
-func (m *PCREMatcher) FindAll(data []byte) []Match {
+func (m *PCREMatcher) CountAll(data []byte) int {
+	if m.invert {
+		return countInvert(data, func(line []byte) bool {
+			return len(m.re.FindAllIndex(line, -1)) == 0
+		})
+	}
+
+	locs := m.re.FindAllIndex(data, -1)
+	return countLocsUniqueLines(data, locs)
+}
+
+func (m *PCREMatcher) FindAll(data []byte) MatchSet {
 	if m.invert {
 		return m.findAllInvert(data)
 	}
 
-	// Search whole buffer at once
 	locs := m.re.FindAllIndex(data, -1)
 	if len(locs) == 0 {
-		return nil
+		return MatchSet{}
 	}
 
-	cursor := newLineCursor(data)
-	matches := make([]Match, 0, len(locs))
-	allPos := make([][2]int, 0, len(locs))
-	lastLineStart := int64(-1)
-	posStart := 0
-
-	for _, loc := range locs {
-		matchStart := loc[0]
-		matchEnd := loc[1]
-
-		line, lineOffset, lineNum := cursor.lineFromPos(matchStart)
-
-		posInLine := matchStart - int(lineOffset)
-		posEnd := matchEnd - int(lineOffset)
-		lineLen := len(line)
-		if posEnd > lineLen {
-			posEnd = lineLen
-		}
-
-		allPos = append(allPos, [2]int{posInLine, posEnd})
-
-		if lineOffset == lastLineStart {
-			last := &matches[len(matches)-1]
-			last.Positions = allPos[posStart:]
-		} else {
-			posStart = len(allPos) - 1
-			matches = append(matches, Match{
-				LineNum:    lineNum,
-				LineBytes:  line,
-				ByteOffset: lineOffset,
-				Positions:  allPos[posStart:],
-			})
-			lastLineStart = lineOffset
-		}
-	}
-
-	return matches
+	return matchSetFromLocs(data, locs, m.maxCols, m.needLineNums)
 }
 
-func (m *PCREMatcher) findAllInvert(data []byte) []Match {
-	var matches []Match
+func (m *PCREMatcher) findAllInvert(data []byte) MatchSet {
+	ms := MatchSet{Data: data}
 	var offset int64
 	lineNum := 1
+	remaining := data
 
-	for len(data) > 0 {
-		idx := bytes.IndexByte(data, '\n')
-		var line []byte
+	for len(remaining) > 0 {
+		idx := bytes.IndexByte(remaining, '\n')
+		var lineLen int
 		if idx >= 0 {
-			line = data[:idx]
-			data = data[idx+1:]
+			lineLen = idx
 		} else {
-			line = data
-			data = nil
+			lineLen = len(remaining)
 		}
+		lineStart := int(offset)
+		line := remaining[:lineLen]
 
 		locs := m.re.FindAllIndex(line, -1)
 		if len(locs) == 0 {
-			matches = append(matches, Match{
+			ms.Matches = append(ms.Matches, Match{
 				LineNum:    lineNum,
-				LineBytes:  line,
+				LineStart:  lineStart,
+				LineLen:    lineLen,
 				ByteOffset: offset,
 			})
 		}
 
-		offset += int64(len(line)) + 1
+		if idx >= 0 {
+			remaining = remaining[idx+1:]
+		} else {
+			remaining = nil
+		}
+		offset += int64(lineLen) + 1
 		lineNum++
 	}
 
-	return matches
+	return ms
 }
 
-func (m *PCREMatcher) FindLine(line []byte, lineNum int, byteOffset int64) (Match, bool) {
-	return m.findInLine(line, lineNum, byteOffset)
-}
-
-func (m *PCREMatcher) findInLine(line []byte, lineNum int, byteOffset int64) (Match, bool) {
+func (m *PCREMatcher) FindLine(line []byte, lineNum int, byteOffset int64) (MatchSet, bool) {
 	locs := m.re.FindAllIndex(line, -1)
 	hasMatch := len(locs) > 0
 
@@ -135,22 +114,27 @@ func (m *PCREMatcher) findInLine(line []byte, lineNum int, byteOffset int64) (Ma
 	}
 
 	if !hasMatch {
-		return Match{}, false
+		return MatchSet{}, false
 	}
 
+	ms := MatchSet{Data: line}
 	match := Match{
 		LineNum:    lineNum,
-		LineBytes:  line,
+		LineStart:  0,
+		LineLen:    len(line),
 		ByteOffset: byteOffset,
 	}
 	if !m.invert && len(locs) > 0 {
-		match.Positions = make([][2]int, len(locs))
+		match.PosIdx = 0
+		match.PosCount = len(locs)
+		ms.Positions = make([][2]int, len(locs))
 		for i, loc := range locs {
-			match.Positions[i] = [2]int{loc[0], loc[1]}
+			ms.Positions[i] = [2]int{loc[0], loc[1]}
 		}
 	}
+	ms.Matches = []Match{match}
 
-	return match, true
+	return ms, true
 }
 
 // Close releases the compiled PCRE regex resources.

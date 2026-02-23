@@ -9,10 +9,12 @@ import (
 // BoyerMooreMatcher uses SIMD-accelerated fixed string matching for single patterns.
 // Uses the SIMD-friendly Horspool algorithm for whole-buffer search.
 type BoyerMooreMatcher struct {
-	pattern    []byte
-	patternLow []byte // lowered pattern for case-insensitive
-	ignoreCase bool
-	invert     bool
+	pattern      []byte
+	patternLow   []byte // lowered pattern for case-insensitive
+	ignoreCase   bool
+	invert       bool
+	maxCols      int
+	needLineNums bool
 }
 
 // NewBoyerMooreMatcher creates a BoyerMooreMatcher for a single fixed pattern.
@@ -35,7 +37,6 @@ func NewBoyerMooreMatcher(pattern string, ignoreCase bool, invert bool) *BoyerMo
 
 func (m *BoyerMooreMatcher) MatchExists(data []byte) bool {
 	if m.invert {
-		// For invert mode, almost any non-empty file will have non-matching lines.
 		return len(data) > 0
 	}
 	if m.ignoreCase {
@@ -44,37 +45,53 @@ func (m *BoyerMooreMatcher) MatchExists(data []byte) bool {
 	return simd.Index(data, m.patternLow) >= 0
 }
 
-func (m *BoyerMooreMatcher) FindAll(data []byte) []Match {
+func (m *BoyerMooreMatcher) CountAll(data []byte) int {
+	if m.invert {
+		return countInvert(data, func(line []byte) bool {
+			if m.ignoreCase {
+				return simd.IndexCaseInsensitive(line, m.patternLow) < 0
+			}
+			return simd.Index(line, m.patternLow) < 0
+		})
+	}
+
+	if m.ignoreCase {
+		return countUniqueLines(data, simd.IndexAllCaseInsensitive(data, m.patternLow))
+	}
+	return countUniqueLines(data, simd.IndexAll(data, m.patternLow))
+}
+
+func (m *BoyerMooreMatcher) FindAll(data []byte) MatchSet {
 	if m.invert {
 		return m.findAllInvert(data)
 	}
 
-	// Use SIMD-accelerated whole-buffer search, then extract lines around matches
 	var offsets []int
 	if m.ignoreCase {
 		offsets = simd.IndexAllCaseInsensitive(data, m.patternLow)
 	} else {
 		offsets = simd.IndexAll(data, m.patternLow)
 	}
-	return matchesFromOffsets(data, offsets, len(m.patternLow))
+	return matchSetFromOffsets(data, offsets, len(m.patternLow), m.maxCols, m.needLineNums)
 }
 
 // findAllInvert returns lines that do NOT contain the pattern.
-func (m *BoyerMooreMatcher) findAllInvert(data []byte) []Match {
-	var matches []Match
+func (m *BoyerMooreMatcher) findAllInvert(data []byte) MatchSet {
+	ms := MatchSet{Data: data}
 	var offset int64
 	lineNum := 1
+	remaining := data
 
-	for len(data) > 0 {
-		idx := bytes.IndexByte(data, '\n')
-		var line []byte
+	for len(remaining) > 0 {
+		idx := bytes.IndexByte(remaining, '\n')
+		var lineLen int
 		if idx >= 0 {
-			line = data[:idx]
-			data = data[idx+1:]
+			lineLen = idx
 		} else {
-			line = data
-			data = nil
+			lineLen = len(remaining)
 		}
+		lineStart := int(offset)
+		line := remaining[:lineLen]
 
 		var found int
 		if m.ignoreCase {
@@ -83,25 +100,27 @@ func (m *BoyerMooreMatcher) findAllInvert(data []byte) []Match {
 			found = simd.Index(line, m.patternLow)
 		}
 		if found < 0 {
-			matches = append(matches, Match{
+			ms.Matches = append(ms.Matches, Match{
 				LineNum:    lineNum,
-				LineBytes:  line,
+				LineStart:  lineStart,
+				LineLen:    lineLen,
 				ByteOffset: offset,
 			})
 		}
 
-		offset += int64(len(line)) + 1
+		if idx >= 0 {
+			remaining = remaining[idx+1:]
+		} else {
+			remaining = nil
+		}
+		offset += int64(lineLen) + 1
 		lineNum++
 	}
 
-	return matches
+	return ms
 }
 
-func (m *BoyerMooreMatcher) FindLine(line []byte, lineNum int, byteOffset int64) (Match, bool) {
-	return m.findInLine(line, lineNum, byteOffset)
-}
-
-func (m *BoyerMooreMatcher) findInLine(line []byte, lineNum int, byteOffset int64) (Match, bool) {
+func (m *BoyerMooreMatcher) FindLine(line []byte, lineNum int, byteOffset int64) (MatchSet, bool) {
 	var offsets []int
 	if m.ignoreCase {
 		offsets = simd.IndexAllCaseInsensitive(line, m.patternLow)
@@ -115,23 +134,28 @@ func (m *BoyerMooreMatcher) findInLine(line []byte, lineNum int, byteOffset int6
 	}
 
 	if !hasMatch {
-		return Match{}, false
+		return MatchSet{}, false
 	}
 
+	ms := MatchSet{Data: line}
 	match := Match{
 		LineNum:    lineNum,
-		LineBytes:  line,
+		LineStart:  0,
+		LineLen:    len(line),
 		ByteOffset: byteOffset,
 	}
 	if !m.invert {
 		pLen := len(m.patternLow)
-		match.Positions = make([][2]int, len(offsets))
+		match.PosIdx = 0
+		match.PosCount = len(offsets)
+		ms.Positions = make([][2]int, len(offsets))
 		for i, off := range offsets {
-			match.Positions[i] = [2]int{off, off + pLen}
+			ms.Positions[i] = [2]int{off, off + pLen}
 		}
 	}
+	ms.Matches = []Match{match}
 
-	return match, true
+	return ms, true
 }
 
 // toLower converts an ASCII byte to lowercase.

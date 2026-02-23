@@ -28,10 +28,14 @@ type Config struct {
 	JSONOutput    bool
 	Color         ColorMode
 	Workers       int
-	NoIgnore      bool
-	Hidden        bool
-	MmapThreshold int64
-	Paths         []string
+	NoIgnore       bool
+	Hidden         bool
+	FollowSymlinks bool
+	SmartCase      bool
+	Globs          []string
+	MaxColumns     int
+	MmapThreshold  int64
+	Paths          []string
 }
 
 // Validate checks that the config is valid and returns an error if not.

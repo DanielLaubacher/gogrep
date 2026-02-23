@@ -8,58 +8,13 @@ import (
 )
 
 // Index returns the index of the first occurrence of pattern in data, or -1 if not present.
-// Uses the SIMD-friendly Horspool algorithm: broadcasts the first and last bytes of the pattern,
-// compares 32 candidate positions simultaneously using AVX2, then verifies middle bytes only
-// for positions where both first and last bytes match.
+// Delegates to bytes.Index which uses optimized AVX2 assembly internally.
 func Index(data, pattern []byte) int {
-	plen := len(pattern)
-	switch {
-	case plen == 0:
-		return 0
-	case plen == 1:
-		return bytes.IndexByte(data, pattern[0])
-	case plen > len(data):
-		return -1
-	}
-
-	first := archsimd.BroadcastUint8x32(pattern[0])
-	last := archsimd.BroadcastUint8x32(pattern[plen-1])
-
-	i := 0
-	limit := len(data) - plen + 1
-
-	for i+32 <= limit {
-		blockFirst := archsimd.LoadUint8x32Slice(data[i:])
-		blockLast := archsimd.LoadUint8x32Slice(data[i+plen-1:])
-
-		mFirst := blockFirst.Equal(first)
-		mLast := blockLast.Equal(last)
-		b := mFirst.And(mLast).ToBits()
-
-		for b != 0 {
-			j := bits.TrailingZeros32(b)
-			candidate := data[i+j : i+j+plen]
-			if plen <= 2 || bytes.Equal(candidate[1:plen-1], pattern[1:plen-1]) {
-				archsimd.ClearAVXUpperBits()
-				return i + j
-			}
-			b &= b - 1
-		}
-
-		i += 32
-	}
-
-	// Scalar tail
-	idx := bytes.Index(data[i:], pattern)
-	archsimd.ClearAVXUpperBits()
-	if idx >= 0 {
-		return i + idx
-	}
-	return -1
+	return bytes.Index(data, pattern)
 }
 
 // IndexAll returns all byte offsets where pattern occurs in data.
-// Non-overlapping matches only.
+// Non-overlapping matches only. Uses bytes.Index (AVX2 asm) for the scan loop.
 func IndexAll(data, pattern []byte) []int {
 	plen := len(pattern)
 	switch {
@@ -71,49 +26,11 @@ func IndexAll(data, pattern []byte) []int {
 		return nil
 	}
 
-	first := archsimd.BroadcastUint8x32(pattern[0])
-	last := archsimd.BroadcastUint8x32(pattern[plen-1])
-
-	// Start with stack-backed storage for small result sets (common case).
-	// If more than 16 matches, append will allocate on heap.
 	var stackBuf [16]int
 	offsets := stackBuf[:0]
 	i := 0
-	limit := len(data) - plen + 1
 
-	for i+32 <= limit {
-		blockFirst := archsimd.LoadUint8x32Slice(data[i:])
-		blockLast := archsimd.LoadUint8x32Slice(data[i+plen-1:])
-
-		mFirst := blockFirst.Equal(first)
-		mLast := blockLast.Equal(last)
-		b := mFirst.And(mLast).ToBits()
-
-		for b != 0 {
-			j := bits.TrailingZeros32(b)
-			pos := i + j
-			candidate := data[pos : pos+plen]
-			if plen <= 2 || bytes.Equal(candidate[1:plen-1], pattern[1:plen-1]) {
-				offsets = append(offsets, pos)
-				// Skip past this match to avoid overlapping
-				// Clear all bits up to and including j+plen-1 to avoid overlaps
-				skipTo := j + plen
-				if skipTo < 32 {
-					b >>= skipTo
-					b <<= skipTo
-				} else {
-					b = 0
-				}
-				continue
-			}
-			b &= b - 1
-		}
-
-		i += 32
-	}
-
-	// Scalar tail
-	for i < limit {
+	for {
 		idx := bytes.Index(data[i:], pattern)
 		if idx < 0 {
 			break
@@ -122,7 +39,6 @@ func IndexAll(data, pattern []byte) []int {
 		i += idx + plen
 	}
 
-	archsimd.ClearAVXUpperBits()
 	if len(offsets) == 0 {
 		return nil
 	}

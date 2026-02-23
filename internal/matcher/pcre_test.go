@@ -12,9 +12,6 @@ import (
 // upstream issue, not a real race condition.
 func skipIfRace(t *testing.T) {
 	t.Helper()
-	// When -race is enabled, the runtime sets this undocumented env var
-	// or we can detect via build tags. Simplest: check if checkptr panics.
-	// Instead, we use a build-tag-free approach: set an env var in Makefile.
 	if os.Getenv("GOGREP_SKIP_PCRE") == "1" {
 		t.Skip("skipping PCRE test: checkptr incompatible with modernc.org/libc")
 	}
@@ -110,17 +107,18 @@ func TestPCREMatcher_FindAll(t *testing.T) {
 				t.Fatalf("NewPCREMatcher() error: %v", err)
 			}
 			defer m.Close()
+			m.needLineNums = true
 
-			matches := m.FindAll([]byte(tt.input))
-			if len(matches) != tt.wantCount {
-				t.Errorf("got %d matches, want %d", len(matches), tt.wantCount)
+			ms := m.FindAll([]byte(tt.input))
+			if len(ms.Matches) != tt.wantCount {
+				t.Errorf("got %d matches, want %d", len(ms.Matches), tt.wantCount)
 			}
 			for i, wantLine := range tt.wantLines {
-				if i >= len(matches) {
+				if i >= len(ms.Matches) {
 					break
 				}
-				if matches[i].LineNum != wantLine {
-					t.Errorf("match[%d].LineNum = %d, want %d", i, matches[i].LineNum, wantLine)
+				if ms.Matches[i].LineNum != wantLine {
+					t.Errorf("match[%d].LineNum = %d, want %d", i, ms.Matches[i].LineNum, wantLine)
 				}
 			}
 		})
@@ -135,18 +133,19 @@ func TestPCREMatcher_Positions(t *testing.T) {
 	}
 	defer m.Close()
 
-	matches := m.FindAll([]byte("xabcabd\n"))
-	if len(matches) != 1 {
-		t.Fatalf("got %d matches, want 1", len(matches))
+	ms := m.FindAll([]byte("xabcabd\n"))
+	if len(ms.Matches) != 1 {
+		t.Fatalf("got %d matches, want 1", len(ms.Matches))
 	}
-	if len(matches[0].Positions) != 2 {
-		t.Fatalf("got %d positions, want 2", len(matches[0].Positions))
+	positions := ms.MatchPositions(0)
+	if len(positions) != 2 {
+		t.Fatalf("got %d positions, want 2", len(positions))
 	}
-	if matches[0].Positions[0] != [2]int{1, 3} {
-		t.Errorf("position[0] = %v, want [1,3]", matches[0].Positions[0])
+	if positions[0] != [2]int{1, 3} {
+		t.Errorf("position[0] = %v, want [1,3]", positions[0])
 	}
-	if matches[0].Positions[1] != [2]int{4, 6} {
-		t.Errorf("position[1] = %v, want [4,6]", matches[0].Positions[1])
+	if positions[1] != [2]int{4, 6} {
+		t.Errorf("position[1] = %v, want [4,6]", positions[1])
 	}
 }
 
@@ -158,15 +157,15 @@ func TestPCREMatcher_FindLine(t *testing.T) {
 	}
 	defer m.Close()
 
-	match, ok := m.FindLine([]byte("this is a test"), 5, 100)
+	ms, ok := m.FindLine([]byte("this is a test"), 5, 100)
 	if !ok {
 		t.Fatal("expected match")
 	}
-	if match.LineNum != 5 {
-		t.Errorf("LineNum = %d, want 5", match.LineNum)
+	if ms.Matches[0].LineNum != 5 {
+		t.Errorf("LineNum = %d, want 5", ms.Matches[0].LineNum)
 	}
-	if match.ByteOffset != 100 {
-		t.Errorf("ByteOffset = %d, want 100", match.ByteOffset)
+	if ms.Matches[0].ByteOffset != 100 {
+		t.Errorf("ByteOffset = %d, want 100", ms.Matches[0].ByteOffset)
 	}
 
 	_, ok = m.FindLine([]byte("no match here"), 1, 0)
@@ -185,27 +184,27 @@ func TestPCREMatcher_InvalidPattern(t *testing.T) {
 
 func TestNewMatcher_PCRE(t *testing.T) {
 	skipIfRace(t)
-	m, err := NewMatcher([]string{`\w+(?=\s+world)`}, false, true, false, false)
+	m, err := NewMatcher([]string{`\w+(?=\s+world)`}, false, true, false, false, MatcherOpts{})
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	matches := m.FindAll([]byte("hello world\nfoo bar\n"))
-	if len(matches) != 1 {
-		t.Errorf("got %d matches, want 1", len(matches))
+	ms := m.FindAll([]byte("hello world\nfoo bar\n"))
+	if len(ms.Matches) != 1 {
+		t.Errorf("got %d matches, want 1", len(ms.Matches))
 	}
 }
 
 func TestNewMatcher_PCRE_Multi(t *testing.T) {
 	skipIfRace(t)
-	m, err := NewMatcher([]string{"hello", "world"}, false, true, false, false)
+	m, err := NewMatcher([]string{"hello", "world"}, false, true, false, false, MatcherOpts{})
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	matches := m.FindAll([]byte("hello\nfoo\nworld\n"))
-	if len(matches) != 2 {
-		t.Errorf("got %d matches, want 2", len(matches))
+	ms := m.FindAll([]byte("hello\nfoo\nworld\n"))
+	if len(ms.Matches) != 2 {
+		t.Errorf("got %d matches, want 2", len(ms.Matches))
 	}
 }
 

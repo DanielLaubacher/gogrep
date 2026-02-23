@@ -17,16 +17,16 @@ func TestContextMatcher_After(t *testing.T) {
 	inner, _ := NewRegexMatcher("hello", false, false)
 	m := NewContextMatcher(inner, 0, 1)
 
-	matches := m.FindAll([]byte("hello\nworld\nfoo\n"))
+	ms := m.FindAll([]byte("hello\nworld\nfoo\n"))
 	// Should get: hello (match) + world (context)
-	if len(matches) != 2 {
-		t.Fatalf("got %d matches, want 2", len(matches))
+	if len(ms.Matches) != 2 {
+		t.Fatalf("got %d matches, want 2", len(ms.Matches))
 	}
-	if matches[0].LineNum != 1 || matches[0].IsContext {
-		t.Errorf("match[0]: LineNum=%d, IsContext=%v, want LineNum=1, IsContext=false", matches[0].LineNum, matches[0].IsContext)
+	if ms.Matches[0].LineNum != 1 || ms.Matches[0].IsContext {
+		t.Errorf("match[0]: LineNum=%d, IsContext=%v, want LineNum=1, IsContext=false", ms.Matches[0].LineNum, ms.Matches[0].IsContext)
 	}
-	if matches[1].LineNum != 2 || !matches[1].IsContext {
-		t.Errorf("match[1]: LineNum=%d, IsContext=%v, want LineNum=2, IsContext=true", matches[1].LineNum, matches[1].IsContext)
+	if ms.Matches[1].LineNum != 2 || !ms.Matches[1].IsContext {
+		t.Errorf("match[1]: LineNum=%d, IsContext=%v, want LineNum=2, IsContext=true", ms.Matches[1].LineNum, ms.Matches[1].IsContext)
 	}
 }
 
@@ -34,16 +34,16 @@ func TestContextMatcher_Before(t *testing.T) {
 	inner, _ := NewRegexMatcher("foo", false, false)
 	m := NewContextMatcher(inner, 1, 0)
 
-	matches := m.FindAll([]byte("hello\nworld\nfoo\nbar\n"))
+	ms := m.FindAll([]byte("hello\nworld\nfoo\nbar\n"))
 	// Should get: world (context) + foo (match)
-	if len(matches) != 2 {
-		t.Fatalf("got %d matches, want 2", len(matches))
+	if len(ms.Matches) != 2 {
+		t.Fatalf("got %d matches, want 2", len(ms.Matches))
 	}
-	if matches[0].LineNum != 2 || !matches[0].IsContext {
-		t.Errorf("match[0]: LineNum=%d, IsContext=%v, want LineNum=2, IsContext=true", matches[0].LineNum, matches[0].IsContext)
+	if ms.Matches[0].LineNum != 2 || !ms.Matches[0].IsContext {
+		t.Errorf("match[0]: LineNum=%d, IsContext=%v, want LineNum=2, IsContext=true", ms.Matches[0].LineNum, ms.Matches[0].IsContext)
 	}
-	if matches[1].LineNum != 3 || matches[1].IsContext {
-		t.Errorf("match[1]: LineNum=%d, IsContext=%v, want LineNum=3, IsContext=false", matches[1].LineNum, matches[1].IsContext)
+	if ms.Matches[1].LineNum != 3 || ms.Matches[1].IsContext {
+		t.Errorf("match[1]: LineNum=%d, IsContext=%v, want LineNum=3, IsContext=false", ms.Matches[1].LineNum, ms.Matches[1].IsContext)
 	}
 }
 
@@ -51,19 +51,19 @@ func TestContextMatcher_BeforeAndAfter(t *testing.T) {
 	inner, _ := NewRegexMatcher("middle", false, false)
 	m := NewContextMatcher(inner, 1, 1)
 
-	matches := m.FindAll([]byte("a\nb\nmiddle\nd\ne\n"))
+	ms := m.FindAll([]byte("a\nb\nmiddle\nd\ne\n"))
 	// Should get: b (context) + middle (match) + d (context)
-	if len(matches) != 3 {
-		t.Fatalf("got %d matches, want 3", len(matches))
+	if len(ms.Matches) != 3 {
+		t.Fatalf("got %d matches, want 3", len(ms.Matches))
 	}
-	if matches[0].LineNum != 2 || !matches[0].IsContext {
-		t.Errorf("match[0]: LineNum=%d, IsContext=%v", matches[0].LineNum, matches[0].IsContext)
+	if ms.Matches[0].LineNum != 2 || !ms.Matches[0].IsContext {
+		t.Errorf("match[0]: LineNum=%d, IsContext=%v", ms.Matches[0].LineNum, ms.Matches[0].IsContext)
 	}
-	if matches[1].LineNum != 3 || matches[1].IsContext {
-		t.Errorf("match[1]: LineNum=%d, IsContext=%v", matches[1].LineNum, matches[1].IsContext)
+	if ms.Matches[1].LineNum != 3 || ms.Matches[1].IsContext {
+		t.Errorf("match[1]: LineNum=%d, IsContext=%v", ms.Matches[1].LineNum, ms.Matches[1].IsContext)
 	}
-	if matches[2].LineNum != 4 || !matches[2].IsContext {
-		t.Errorf("match[2]: LineNum=%d, IsContext=%v", matches[2].LineNum, matches[2].IsContext)
+	if ms.Matches[2].LineNum != 4 || !ms.Matches[2].IsContext {
+		t.Errorf("match[2]: LineNum=%d, IsContext=%v", ms.Matches[2].LineNum, ms.Matches[2].IsContext)
 	}
 }
 
@@ -74,16 +74,16 @@ func TestContextMatcher_Separator(t *testing.T) {
 	m = NewContextMatcher(inner, 0, 1)
 
 	// Two matches far apart should have a separator
-	matches := m.FindAll([]byte("match\na\nb\nc\nmatch\nd\n"))
+	ms := m.FindAll([]byte("match\na\nb\nc\nmatch\nd\n"))
 	// match(1) + a(context) + separator + match(5) + d(context)
 	hasSeparator := false
-	for _, match := range matches {
-		if match.LineNum == 0 && string(match.LineBytes) == "--" {
+	for _, match := range ms.Matches {
+		if match.LineNum == 0 && match.LineStart == -1 {
 			hasSeparator = true
 		}
 	}
 	if !hasSeparator {
-		t.Errorf("expected separator between non-contiguous groups, got matches: %v", matches)
+		t.Errorf("expected separator between non-contiguous groups, got %d matches", len(ms.Matches))
 	}
 }
 
@@ -91,9 +91,9 @@ func TestContextMatcher_NoMatch(t *testing.T) {
 	inner, _ := NewRegexMatcher("xyz", false, false)
 	m := NewContextMatcher(inner, 2, 2)
 
-	matches := m.FindAll([]byte("hello\nworld\n"))
-	if len(matches) != 0 {
-		t.Errorf("got %d matches, want 0", len(matches))
+	ms := m.FindAll([]byte("hello\nworld\n"))
+	if len(ms.Matches) != 0 {
+		t.Errorf("got %d matches, want 0", len(ms.Matches))
 	}
 }
 
@@ -102,10 +102,10 @@ func TestContextMatcher_OverlappingContext(t *testing.T) {
 	m := NewContextMatcher(inner, 1, 1)
 
 	// Two adjacent matches — context should not duplicate lines
-	matches := m.FindAll([]byte("a\nxb\nxc\nd\n"))
+	ms := m.FindAll([]byte("a\nxb\nxc\nd\n"))
 	// a(ctx) + xb(match) + xc(match) + d(ctx) — no separator, no duplicates
-	lineNums := make([]int, 0, len(matches))
-	for _, match := range matches {
+	lineNums := make([]int, 0, len(ms.Matches))
+	for _, match := range ms.Matches {
 		lineNums = append(lineNums, match.LineNum)
 	}
 	expected := []int{1, 2, 3, 4}
@@ -124,11 +124,11 @@ func TestContextMatcher_FindLine(t *testing.T) {
 	m := NewContextMatcher(inner, 2, 2)
 
 	// FindLine delegates to inner
-	match, ok := m.FindLine([]byte("this is a test"), 5, 100)
+	ms, ok := m.FindLine([]byte("this is a test"), 5, 100)
 	if !ok {
 		t.Fatal("expected match")
 	}
-	if match.LineNum != 5 {
-		t.Errorf("LineNum = %d, want 5", match.LineNum)
+	if ms.Matches[0].LineNum != 5 {
+		t.Errorf("LineNum = %d, want 5", ms.Matches[0].LineNum)
 	}
 }

@@ -28,25 +28,35 @@ type jsonPos struct {
 }
 
 func (f *JSONFormatter) Format(buf []byte, result Result, multiFile bool) []byte {
-	if len(result.Matches) == 0 {
+	ms := &result.MatchSet
+	if len(ms.Matches) == 0 {
 		return buf
 	}
 
-	for _, m := range result.Matches {
+	for i := range ms.Matches {
+		m := &ms.Matches[i]
 		if m.IsContext {
 			continue
 		}
+
+		var lineText string
+		if m.LineStart >= 0 {
+			lineText = string(ms.Data[m.LineStart : m.LineStart+m.LineLen])
+		}
+
 		jm := jsonMatch{
 			Type:       "match",
 			File:       result.FilePath,
 			LineNum:    m.LineNum,
 			ByteOffset: m.ByteOffset,
-			Text:       string(m.LineBytes),
+			Text:       lineText,
 		}
-		if len(m.Positions) > 0 {
-			jm.Matches = make([]jsonPos, len(m.Positions))
-			for i, pos := range m.Positions {
-				jm.Matches[i] = jsonPos{Start: pos[0], End: pos[1]}
+
+		positions := ms.MatchPositions(i)
+		if len(positions) > 0 {
+			jm.Matches = make([]jsonPos, len(positions))
+			for j, pos := range positions {
+				jm.Matches[j] = jsonPos{Start: pos[0], End: pos[1]}
 			}
 		}
 		data, _ := json.Marshal(jm)

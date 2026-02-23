@@ -1,7 +1,9 @@
 package walker
 
 import (
+	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 	"unsafe"
 
@@ -15,9 +17,11 @@ type FileEntry struct {
 
 // WalkOptions configures directory traversal behavior.
 type WalkOptions struct {
-	Recursive bool
-	NoIgnore  bool // skip .gitignore processing
-	Hidden    bool // include hidden files and directories
+	Recursive      bool
+	NoIgnore       bool     // skip .gitignore processing
+	Hidden         bool     // include hidden files and directories
+	FollowSymlinks bool     // follow symbolic links
+	Globs          []string // include/exclude globs (prefix ! to exclude)
 }
 
 // Walk traverses directories and sends discovered files on the returned channel.
@@ -47,10 +51,12 @@ func Walk(roots []string, opts WalkOptions) (<-chan FileEntry, <-chan error) {
 		}
 
 		pw := &parallelWalker{
-			fileCh:   fileCh,
-			errCh:    errCh,
-			hidden:   opts.Hidden,
-			noIgnore: opts.NoIgnore,
+			fileCh:         fileCh,
+			errCh:          errCh,
+			hidden:         opts.Hidden,
+			noIgnore:       opts.NoIgnore,
+			followSymlinks: opts.FollowSymlinks,
+			globs:          opts.Globs,
 		}
 		pw.cond = sync.NewCond(&pw.mu)
 
@@ -87,10 +93,12 @@ type walkItem struct {
 
 // parallelWalker coordinates concurrent BFS directory traversal.
 type parallelWalker struct {
-	fileCh   chan<- FileEntry
-	errCh    chan<- error
-	hidden   bool
-	noIgnore bool
+	fileCh         chan<- FileEntry
+	errCh          chan<- error
+	hidden         bool
+	noIgnore       bool
+	followSymlinks bool
+	globs          []string
 
 	mu      sync.Mutex
 	queue   []walkItem
@@ -188,6 +196,9 @@ func (pw *parallelWalker) processDir(item walkItem, buf []byte, dirents []Dirent
 				if item.ignores != nil && isIgnoredByLayers(item.ignores, fullPath, true) {
 					continue
 				}
+				if pw.isGlobExcluded(entry.Name) {
+					continue
+				}
 				// Build child ignore layers: clone parent + load this dir's .gitignore
 				var childIgnores []ignoreLayer
 				if !pw.noIgnore {
@@ -204,9 +215,15 @@ func (pw *parallelWalker) processDir(item walkItem, buf []byte, dirents []Dirent
 				if item.ignores != nil && isIgnoredByLayers(item.ignores, fullPath, false) {
 					continue
 				}
+				if pw.isGlobExcluded(entry.Name) {
+					continue
+				}
 				pw.fileCh <- FileEntry{Path: fullPath}
 
 			case DT_LNK:
+				if !pw.followSymlinks {
+					continue
+				}
 				var stat unix.Stat_t
 				if err := unix.Stat(fullPath, &stat); err != nil {
 					continue // silently skip broken symlinks
@@ -218,12 +235,18 @@ func (pw *parallelWalker) processDir(item walkItem, buf []byte, dirents []Dirent
 					if item.ignores != nil && isIgnoredByLayers(item.ignores, fullPath, false) {
 						continue
 					}
+					if pw.isGlobExcluded(entry.Name) {
+						continue
+					}
 					pw.fileCh <- FileEntry{Path: fullPath}
 				} else if stat.Mode&unix.S_IFMT == unix.S_IFDIR {
 					if skipDir(entry.Name, pw.hidden) {
 						continue
 					}
 					if item.ignores != nil && isIgnoredByLayers(item.ignores, fullPath, true) {
+						continue
+					}
+					if pw.isGlobExcluded(entry.Name) {
 						continue
 					}
 					var childIgnores []ignoreLayer
@@ -249,12 +272,18 @@ func (pw *parallelWalker) processDir(item walkItem, buf []byte, dirents []Dirent
 					if item.ignores != nil && isIgnoredByLayers(item.ignores, fullPath, false) {
 						continue
 					}
+					if pw.isGlobExcluded(entry.Name) {
+						continue
+					}
 					pw.fileCh <- FileEntry{Path: fullPath}
 				} else if mode == unix.S_IFDIR {
 					if skipDir(entry.Name, pw.hidden) {
 						continue
 					}
 					if item.ignores != nil && isIgnoredByLayers(item.ignores, fullPath, true) {
+						continue
+					}
+					if pw.isGlobExcluded(entry.Name) {
 						continue
 					}
 					var childIgnores []ignoreLayer
@@ -311,6 +340,61 @@ func skipDir(name string, hidden bool) bool {
 		return true
 	}
 	return false
+}
+
+// isGlobExcluded checks if a filename matches any glob exclusion patterns.
+// Globs prefixed with ! are exclusion patterns; others are inclusion patterns.
+// If only exclusion patterns exist, a file is excluded if it matches any exclusion.
+// If any inclusion patterns exist, a file must match at least one inclusion AND not
+// match any exclusion.
+func (pw *parallelWalker) isGlobExcluded(name string) bool {
+	if len(pw.globs) == 0 {
+		return false
+	}
+
+	hasIncludes := false
+	included := false
+	for _, g := range pw.globs {
+		if strings.HasPrefix(g, "!") {
+			// Exclusion glob
+			pattern := g[1:]
+			if matchGlob(pattern, name) {
+				return true
+			}
+		} else {
+			// Inclusion glob
+			hasIncludes = true
+			if matchGlob(g, name) {
+				included = true
+			}
+		}
+	}
+
+	if hasIncludes && !included {
+		return true
+	}
+	return false
+}
+
+// matchGlob matches a name against a glob pattern.
+// Supports brace expansion for {a,b,c} patterns.
+func matchGlob(pattern, name string) bool {
+	// Handle brace expansion: {a,b,c} → try each alternative
+	if i := strings.IndexByte(pattern, '{'); i >= 0 {
+		if j := strings.IndexByte(pattern[i:], '}'); j >= 0 {
+			prefix := pattern[:i]
+			suffix := pattern[i+j+1:]
+			alts := strings.Split(pattern[i+1:i+j], ",")
+			for _, alt := range alts {
+				if matchGlob(prefix+alt+suffix, name) {
+					return true
+				}
+			}
+			return false
+		}
+	}
+	matched, _ := filepath.Match(pattern, name)
+	return matched
 }
 
 // WalkError represents an error during directory traversal.

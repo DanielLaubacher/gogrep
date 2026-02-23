@@ -1,10 +1,10 @@
 package cli
 
 import (
+	"fmt"
 	"os"
 	"sync/atomic"
-
-	"github.com/charmbracelet/log"
+	"unicode"
 
 	"github.com/dl/gogrep/internal/input"
 	"github.com/dl/gogrep/internal/matcher"
@@ -14,17 +14,58 @@ import (
 	"github.com/dl/gogrep/internal/watch"
 )
 
+// logWarn writes a warning to stderr.
+func logWarn(format string, args ...any) {
+	fmt.Fprintf(os.Stderr, "gogrep: "+format+"\n", args...)
+}
+
+// searchMode determines the fast path in searchReader.
+type searchMode int
+
+const (
+	searchFull      searchMode = iota // full match extraction
+	searchFilesOnly                   // just check if any match exists
+	searchCountOnly                   // count matching lines, skip line extraction
+)
+
 // Run executes the search with the given config.
 // Returns exit code: 0 = match found, 1 = no match, 2 = error.
 func Run(cfg Config) int {
-	logger := log.NewWithOptions(os.Stderr, log.Options{
-		Level: log.WarnLevel,
-	})
+	// Smart case: if enabled and all patterns are lowercase, enable case-insensitive
+	if cfg.SmartCase && !cfg.IgnoreCase {
+		allLower := true
+		for _, p := range cfg.Patterns {
+			for _, r := range p {
+				if unicode.IsUpper(r) {
+					allLower = false
+					break
+				}
+			}
+			if !allLower {
+				break
+			}
+		}
+		if allLower {
+			cfg.IgnoreCase = true
+		}
+	}
+
+	// Resolve maxCols for matcher
+	maxCols := cfg.MaxColumns
+	if maxCols == 0 {
+		maxCols = 75
+	}
+	if maxCols < 0 {
+		maxCols = 0 // -1 from CLI means no limit
+	}
 
 	// Create matcher
-	m, err := matcher.NewMatcher(cfg.Patterns, cfg.Fixed, cfg.PCRE, cfg.IgnoreCase, cfg.Invert)
+	m, err := matcher.NewMatcher(cfg.Patterns, cfg.Fixed, cfg.PCRE, cfg.IgnoreCase, cfg.Invert, matcher.MatcherOpts{
+		MaxCols:      maxCols,
+		NeedLineNums: cfg.LineNumbers,
+	})
 	if err != nil {
-		logger.Error("invalid pattern", "err", err)
+		logWarn("invalid pattern: %v", err)
 		return 2
 	}
 
@@ -50,18 +91,26 @@ func Run(cfg Config) int {
 	if cfg.JSONOutput {
 		formatter = output.NewJSONFormatter()
 	} else {
-		formatter = output.NewTextFormatter(cfg.LineNumbers, cfg.CountOnly, cfg.FileNamesOnly, useColor)
+		formatter = output.NewTextFormatter(cfg.LineNumbers, cfg.CountOnly, cfg.FileNamesOnly, useColor, maxCols)
 	}
 
 	reader := input.NewAdaptiveReader(cfg.MmapThreshold)
 	stdinReader := input.NewStdinReader()
+
+	// Determine search mode
+	mode := searchFull
+	if cfg.FileNamesOnly {
+		mode = searchFilesOnly
+	} else if cfg.CountOnly {
+		mode = searchCountOnly
+	}
 
 	// Determine input sources
 	paths := cfg.Paths
 	readFromStdin := len(paths) == 0
 
 	if cfg.WatchMode {
-		return runWatch(paths, m, formatter, w, cfg, logger)
+		return runWatch(paths, m, formatter, w, cfg)
 	}
 
 	if readFromStdin {
@@ -69,37 +118,46 @@ func Run(cfg Config) int {
 	}
 
 	if cfg.Recursive {
-		return runRecursive(paths, m, reader, formatter, w, cfg, logger)
+		return runRecursive(paths, m, reader, formatter, w, cfg, mode)
 	}
 
-	return runFiles(paths, m, reader, formatter, w, logger)
+	return runFiles(paths, m, reader, formatter, w, mode)
 }
 
 func runStdin(reader input.Reader, m matcher.Matcher, formatter output.Formatter, w *output.Writer) int {
-	result := searchReader(reader, "", m)
-	if len(result.Matches) > 0 {
+	result := searchReader(reader, "", m, searchFull)
+	if result.HasMatch() {
 		buf := formatter.Format(nil, result, false)
+		if result.Closer != nil {
+			result.Closer()
+		}
 		w.Write(buf)
 		return 0
+	}
+	if result.Closer != nil {
+		result.Closer()
 	}
 	return 1
 }
 
-func runFiles(paths []string, m matcher.Matcher, reader input.Reader, formatter output.Formatter, w *output.Writer, logger *log.Logger) int {
+func runFiles(paths []string, m matcher.Matcher, reader input.Reader, formatter output.Formatter, w *output.Writer, mode searchMode) int {
 	multiFile := len(paths) > 1
 	hasMatch := false
 	var buf []byte
 
 	for _, path := range paths {
-		result := searchReader(reader, path, m)
+		result := searchReader(reader, path, m, mode)
 		if result.Err != nil {
-			logger.Warn("error", "path", path, "err", result.Err)
+			logWarn("%s: %v", path, result.Err)
 			continue
 		}
-		if len(result.Matches) > 0 {
+		if result.HasMatch() {
 			hasMatch = true
 		}
 		buf = formatter.Format(buf[:0], result, multiFile)
+		if result.Closer != nil {
+			result.Closer()
+		}
 		w.Write(buf)
 	}
 
@@ -109,22 +167,24 @@ func runFiles(paths []string, m matcher.Matcher, reader input.Reader, formatter 
 	return 1
 }
 
-func runRecursive(paths []string, m matcher.Matcher, reader input.Reader, formatter output.Formatter, w *output.Writer, cfg Config, logger *log.Logger) int {
+func runRecursive(paths []string, m matcher.Matcher, reader input.Reader, formatter output.Formatter, w *output.Writer, cfg Config, mode searchMode) int {
 	fileCh, errCh := walker.Walk(paths, walker.WalkOptions{
-		Recursive: true,
-		NoIgnore:  cfg.NoIgnore,
-		Hidden:    cfg.Hidden,
+		Recursive:      true,
+		NoIgnore:       cfg.NoIgnore,
+		Hidden:         cfg.Hidden,
+		FollowSymlinks: cfg.FollowSymlinks,
+		Globs:          cfg.Globs,
 	})
 
 	// Log walk errors in background
 	go func() {
 		for err := range errCh {
-			logger.Warn("walk error", "err", err)
+			logWarn("walk: %v", err)
 		}
 	}()
 
 	// Create scheduler and run workers
-	sched := scheduler.New(cfg.Workers, m, reader, cfg.FileNamesOnly)
+	sched := scheduler.New(cfg.Workers, m, reader, mode == searchFilesOnly, mode == searchCountOnly)
 	resultCh := sched.Run(fileCh)
 
 	// Write results in order
@@ -140,10 +200,10 @@ func runRecursive(paths []string, m matcher.Matcher, reader input.Reader, format
 	return 1
 }
 
-func runWatch(paths []string, m matcher.Matcher, formatter output.Formatter, w *output.Writer, cfg Config, logger *log.Logger) int {
+func runWatch(paths []string, m matcher.Matcher, formatter output.Formatter, w *output.Writer, cfg Config) int {
 	watcher, err := watch.New()
 	if err != nil {
-		logger.Error("failed to create watcher", "err", err)
+		logWarn("failed to create watcher: %v", err)
 		return 2
 	}
 	defer watcher.Close()
@@ -151,7 +211,7 @@ func runWatch(paths []string, m matcher.Matcher, formatter output.Formatter, w *
 	// Add all paths to watch
 	for _, path := range paths {
 		if err := watcher.Add(path); err != nil {
-			logger.Error("failed to watch", "path", path, "err", err)
+			logWarn("failed to watch %s: %v", path, err)
 			return 2
 		}
 	}
@@ -161,7 +221,7 @@ func runWatch(paths []string, m matcher.Matcher, formatter output.Formatter, w *
 
 	for evt := range events {
 		if evt.Err != nil {
-			logger.Warn("watch error", "err", evt.Err)
+			logWarn("watch: %v", evt.Err)
 			continue
 		}
 
@@ -169,7 +229,7 @@ func runWatch(paths []string, m matcher.Matcher, formatter output.Formatter, w *
 		case watch.EventModified:
 			data, err := watcher.ReadNew(evt.Path)
 			if err != nil {
-				logger.Warn("read error", "path", evt.Path, "err", err)
+				logWarn("%s: read: %v", evt.Path, err)
 				continue
 			}
 			if len(data) == 0 {
@@ -177,12 +237,12 @@ func runWatch(paths []string, m matcher.Matcher, formatter output.Formatter, w *
 			}
 
 			// Search the new content
-			matches := m.FindAll(data)
-			if len(matches) > 0 {
+			ms := m.FindAll(data)
+			if ms.HasMatch() {
 				hasMatch = true
 				result := output.Result{
 					FilePath: evt.Path,
-					Matches:  matches,
+					MatchSet: ms,
 				}
 				buf := formatter.Format(nil, result, true)
 				w.Write(buf)
@@ -191,11 +251,11 @@ func runWatch(paths []string, m matcher.Matcher, formatter output.Formatter, w *
 		case watch.EventCreated:
 			// Add newly created files to the watch
 			if err := watcher.Add(evt.Path); err != nil {
-				logger.Warn("failed to watch new file", "path", evt.Path, "err", err)
+				logWarn("failed to watch %s: %v", evt.Path, err)
 			}
 
 		case watch.EventDeleted:
-			logger.Warn("watched file removed", "path", evt.Path)
+			logWarn("watched file removed: %s", evt.Path)
 		}
 	}
 
@@ -205,7 +265,7 @@ func runWatch(paths []string, m matcher.Matcher, formatter output.Formatter, w *
 	return 1
 }
 
-func searchReader(r input.Reader, path string, m matcher.Matcher) output.Result {
+func searchReader(r input.Reader, path string, m matcher.Matcher, mode searchMode) output.Result {
 	result := output.Result{FilePath: path}
 
 	readResult, err := r.Read(path)
@@ -213,21 +273,43 @@ func searchReader(r input.Reader, path string, m matcher.Matcher) output.Result 
 		result.Err = err
 		return result
 	}
-	defer func() {
+
+	closeReader := func() {
 		if readResult.Closer != nil {
 			readResult.Closer()
 		}
-	}()
+	}
 
 	if readResult.Data == nil {
+		closeReader()
 		return result
 	}
 
 	// Binary detection: skip binary files entirely (like ripgrep)
 	if walker.IsBinary(readResult.Data) {
+		closeReader()
 		return result
 	}
 
-	result.Matches = m.FindAll(readResult.Data)
+	switch mode {
+	case searchFilesOnly:
+		if m.MatchExists(readResult.Data) {
+			result.MatchSet = matcher.MatchSet{Matches: []matcher.Match{{}}}
+		}
+		closeReader()
+	case searchCountOnly:
+		count := m.CountAll(readResult.Data)
+		result.MatchCount = count
+		closeReader()
+	default:
+		result.MatchSet = m.FindAll(readResult.Data)
+		// MatchSet.Data is the file buffer — pass Closer
+		// to the caller so the buffer stays alive until formatting is done.
+		if result.MatchSet.HasMatch() {
+			result.Closer = closeReader
+		} else {
+			closeReader()
+		}
+	}
 	return result
 }

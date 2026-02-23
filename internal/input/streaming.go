@@ -60,9 +60,9 @@ func (r *StreamingReader) Lines() <-chan StreamLine {
 
 // SearchStream performs a streaming search, yielding matches as they are found.
 // This is useful for piped input or tail-like watching where the entire content
-// is not available upfront.
-func SearchStream(r io.Reader, m matcher.Matcher, before, after int) <-chan matcher.Match {
-	ch := make(chan matcher.Match, 64)
+// is not available upfront. Each emitted MatchSet contains a single match/context line.
+func SearchStream(r io.Reader, m matcher.Matcher, before, after int) <-chan matcher.MatchSet {
+	ch := make(chan matcher.MatchSet, 64)
 	go func() {
 		defer close(ch)
 		scanner := bufio.NewScanner(r)
@@ -85,31 +85,39 @@ func SearchStream(r io.Reader, m matcher.Matcher, before, after int) <-chan matc
 			lineCopy := make([]byte, len(line))
 			copy(lineCopy, line)
 
-			match, ok := m.FindLine(lineCopy, lineNum, offset)
+			ms, ok := m.FindLine(lineCopy, lineNum, offset)
 			offset += int64(len(line)) + 1
 
 			if ok {
 				// Emit buffered context-before lines
 				for _, cl := range ring {
-					ch <- matcher.Match{
-						LineNum:    cl.lineNum,
-						LineBytes:  cl.data,
-						ByteOffset: cl.offset,
-						IsContext:  true,
+					ch <- matcher.MatchSet{
+						Data: cl.data,
+						Matches: []matcher.Match{{
+							LineNum:    cl.lineNum,
+							LineStart:  0,
+							LineLen:    len(cl.data),
+							ByteOffset: cl.offset,
+							IsContext:  true,
+						}},
 					}
 				}
 				ring = ring[:0]
 
 				// Emit the match
-				ch <- match
+				ch <- ms
 				afterRemaining = after
 			} else if afterRemaining > 0 {
 				// Context-after line
-				ch <- matcher.Match{
-					LineNum:    lineNum,
-					LineBytes:  lineCopy,
-					ByteOffset: offset - int64(len(line)) - 1,
-					IsContext:  true,
+				ch <- matcher.MatchSet{
+					Data: lineCopy,
+					Matches: []matcher.Match{{
+						LineNum:    lineNum,
+						LineStart:  0,
+						LineLen:    len(lineCopy),
+						ByteOffset: offset - int64(len(line)) - 1,
+						IsContext:  true,
+					}},
 				}
 				afterRemaining--
 			} else if before > 0 {

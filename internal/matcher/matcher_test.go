@@ -78,18 +78,19 @@ func TestRegexMatcher_FindAll(t *testing.T) {
 			if err != nil {
 				t.Fatalf("NewRegexMatcher() error: %v", err)
 			}
+			m.needLineNums = true
 
-			matches := m.FindAll([]byte(tt.input))
-			if len(matches) != tt.wantCount {
-				t.Errorf("got %d matches, want %d", len(matches), tt.wantCount)
+			ms := m.FindAll([]byte(tt.input))
+			if len(ms.Matches) != tt.wantCount {
+				t.Errorf("got %d matches, want %d", len(ms.Matches), tt.wantCount)
 			}
 
 			for i, wantLine := range tt.wantLines {
-				if i >= len(matches) {
+				if i >= len(ms.Matches) {
 					break
 				}
-				if matches[i].LineNum != wantLine {
-					t.Errorf("match[%d].LineNum = %d, want %d", i, matches[i].LineNum, wantLine)
+				if ms.Matches[i].LineNum != wantLine {
+					t.Errorf("match[%d].LineNum = %d, want %d", i, ms.Matches[i].LineNum, wantLine)
 				}
 			}
 		})
@@ -102,18 +103,19 @@ func TestRegexMatcher_Positions(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	matches := m.FindAll([]byte("xabcabd\n"))
-	if len(matches) != 1 {
-		t.Fatalf("got %d matches, want 1", len(matches))
+	ms := m.FindAll([]byte("xabcabd\n"))
+	if len(ms.Matches) != 1 {
+		t.Fatalf("got %d matches, want 1", len(ms.Matches))
 	}
-	if len(matches[0].Positions) != 2 {
-		t.Fatalf("got %d positions, want 2", len(matches[0].Positions))
+	positions := ms.MatchPositions(0)
+	if len(positions) != 2 {
+		t.Fatalf("got %d positions, want 2", len(positions))
 	}
-	if matches[0].Positions[0] != [2]int{1, 3} {
-		t.Errorf("position[0] = %v, want [1,3]", matches[0].Positions[0])
+	if positions[0] != [2]int{1, 3} {
+		t.Errorf("position[0] = %v, want [1,3]", positions[0])
 	}
-	if matches[0].Positions[1] != [2]int{4, 6} {
-		t.Errorf("position[1] = %v, want [4,6]", matches[0].Positions[1])
+	if positions[1] != [2]int{4, 6} {
+		t.Errorf("position[1] = %v, want [4,6]", positions[1])
 	}
 }
 
@@ -163,52 +165,52 @@ func TestFixedMatcher_FindAll(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			m := NewFixedMatcher(tt.pattern, tt.ignoreCase, tt.invert)
-			matches := m.FindAll([]byte(tt.input))
-			if len(matches) != tt.wantCount {
-				t.Errorf("got %d matches, want %d", len(matches), tt.wantCount)
+			ms := m.FindAll([]byte(tt.input))
+			if len(ms.Matches) != tt.wantCount {
+				t.Errorf("got %d matches, want %d", len(ms.Matches), tt.wantCount)
 			}
 		})
 	}
 }
 
 func TestNewMatcher_Fixed(t *testing.T) {
-	m, err := NewMatcher([]string{"hello"}, true, false, false, false)
+	m, err := NewMatcher([]string{"hello"}, true, false, false, false, MatcherOpts{})
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	matches := m.FindAll([]byte("hello world\ngoodbye\n"))
-	if len(matches) != 1 {
-		t.Errorf("got %d matches, want 1", len(matches))
+	ms := m.FindAll([]byte("hello world\ngoodbye\n"))
+	if len(ms.Matches) != 1 {
+		t.Errorf("got %d matches, want 1", len(ms.Matches))
 	}
 }
 
 func TestNewMatcher_MultiFixed(t *testing.T) {
-	m, err := NewMatcher([]string{"apple", "cherry"}, true, false, false, false)
+	m, err := NewMatcher([]string{"apple", "cherry"}, true, false, false, false, MatcherOpts{})
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	matches := m.FindAll([]byte("apple\nbanana\ncherry\n"))
-	if len(matches) != 2 {
-		t.Errorf("got %d matches, want 2", len(matches))
+	ms := m.FindAll([]byte("apple\nbanana\ncherry\n"))
+	if len(ms.Matches) != 2 {
+		t.Errorf("got %d matches, want 2", len(ms.Matches))
 	}
 }
 
 func TestNewMatcher_MultiRegex(t *testing.T) {
-	m, err := NewMatcher([]string{"hello", "world"}, false, false, false, false)
+	m, err := NewMatcher([]string{"hello", "world"}, false, false, false, false, MatcherOpts{})
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	matches := m.FindAll([]byte("hello\nfoo\nworld\n"))
-	if len(matches) != 2 {
-		t.Errorf("got %d matches, want 2", len(matches))
+	ms := m.FindAll([]byte("hello\nfoo\nworld\n"))
+	if len(ms.Matches) != 2 {
+		t.Errorf("got %d matches, want 2", len(ms.Matches))
 	}
 }
 
 func TestNewMatcher_NoPatterns(t *testing.T) {
-	_, err := NewMatcher(nil, false, false, false, false)
+	_, err := NewMatcher(nil, false, false, false, false, MatcherOpts{})
 	if err == nil {
 		t.Error("expected error for no patterns")
 	}

@@ -20,8 +20,10 @@ func readMmap(fd int, size int64, path string) (ReadResult, error) {
 	// Hint kernel: sequential read pattern
 	unix.Fadvise(fd, 0, size, unix.FADV_SEQUENTIAL)
 
-	// Memory-map the file with MAP_POPULATE to prefault pages
-	data, err := syscall.Mmap(fd, 0, int(size), syscall.PROT_READ, syscall.MAP_PRIVATE|syscall.MAP_POPULATE)
+	// Memory-map the file. FADV_SEQUENTIAL + MADV_SEQUENTIAL handle readahead;
+	// we skip MAP_POPULATE so pages fault in on demand, enabling early exit
+	// for -l/MatchExists without reading the entire file.
+	data, err := syscall.Mmap(fd, 0, int(size), syscall.PROT_READ, syscall.MAP_PRIVATE)
 	if err != nil {
 		// Fall back to buffered read from the already-open fd
 		return readBuffered(fd, size)

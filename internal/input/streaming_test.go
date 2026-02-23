@@ -72,21 +72,21 @@ func TestSearchStream_BasicMatch(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	matches := SearchStream(strings.NewReader(input), m, 0, 0)
+	results := SearchStream(strings.NewReader(input), m, 0, 0)
 
-	var collected []matcher.Match
-	for match := range matches {
-		collected = append(collected, match)
+	var collected []matcher.MatchSet
+	for ms := range results {
+		collected = append(collected, ms)
 	}
 
 	if len(collected) != 2 {
 		t.Fatalf("got %d matches, want 2", len(collected))
 	}
-	if collected[0].LineNum != 1 {
-		t.Errorf("match[0].LineNum = %d, want 1", collected[0].LineNum)
+	if collected[0].Matches[0].LineNum != 1 {
+		t.Errorf("match[0].LineNum = %d, want 1", collected[0].Matches[0].LineNum)
 	}
-	if collected[1].LineNum != 3 {
-		t.Errorf("match[1].LineNum = %d, want 3", collected[1].LineNum)
+	if collected[1].Matches[0].LineNum != 3 {
+		t.Errorf("match[1].LineNum = %d, want 3", collected[1].Matches[0].LineNum)
 	}
 }
 
@@ -97,10 +97,10 @@ func TestSearchStream_NoMatch(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	matches := SearchStream(strings.NewReader(input), m, 0, 0)
+	results := SearchStream(strings.NewReader(input), m, 0, 0)
 
 	count := 0
-	for range matches {
+	for range results {
 		count++
 	}
 	if count != 0 {
@@ -115,24 +115,24 @@ func TestSearchStream_ContextAfter(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	matches := SearchStream(strings.NewReader(input), m, 0, 2)
+	results := SearchStream(strings.NewReader(input), m, 0, 2)
 
-	var collected []matcher.Match
-	for match := range matches {
-		collected = append(collected, match)
+	var collected []matcher.MatchSet
+	for ms := range results {
+		collected = append(collected, ms)
 	}
 
 	// match + 2 context after lines
 	if len(collected) != 3 {
 		t.Fatalf("got %d results, want 3", len(collected))
 	}
-	if collected[0].IsContext {
+	if collected[0].Matches[0].IsContext {
 		t.Error("match[0] should not be context")
 	}
-	if !collected[1].IsContext {
+	if !collected[1].Matches[0].IsContext {
 		t.Error("match[1] should be context")
 	}
-	if !collected[2].IsContext {
+	if !collected[2].Matches[0].IsContext {
 		t.Error("match[2] should be context")
 	}
 }
@@ -144,24 +144,24 @@ func TestSearchStream_ContextBefore(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	matches := SearchStream(strings.NewReader(input), m, 2, 0)
+	results := SearchStream(strings.NewReader(input), m, 2, 0)
 
-	var collected []matcher.Match
-	for match := range matches {
-		collected = append(collected, match)
+	var collected []matcher.MatchSet
+	for ms := range results {
+		collected = append(collected, ms)
 	}
 
 	// 2 context before lines + match
 	if len(collected) != 3 {
 		t.Fatalf("got %d results, want 3", len(collected))
 	}
-	if !collected[0].IsContext {
+	if !collected[0].Matches[0].IsContext {
 		t.Error("match[0] should be context")
 	}
-	if !collected[1].IsContext {
+	if !collected[1].Matches[0].IsContext {
 		t.Error("match[1] should be context")
 	}
-	if collected[2].IsContext {
+	if collected[2].Matches[0].IsContext {
 		t.Error("match[2] should not be context")
 	}
 }
@@ -173,24 +173,27 @@ func TestSearchStream_ContextBeforeAndAfter(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	matches := SearchStream(strings.NewReader(input), m, 1, 1)
+	results := SearchStream(strings.NewReader(input), m, 1, 1)
 
-	var collected []matcher.Match
-	for match := range matches {
-		collected = append(collected, match)
+	var collected []matcher.MatchSet
+	for ms := range results {
+		collected = append(collected, ms)
 	}
 
 	// b(ctx) + match + d(ctx)
 	if len(collected) != 3 {
 		t.Fatalf("got %d results, want 3", len(collected))
 	}
-	if string(collected[0].LineBytes) != "b" || !collected[0].IsContext {
-		t.Errorf("collected[0] = %q (context=%v), want 'b' (context=true)", collected[0].LineBytes, collected[0].IsContext)
+	lineBytes0 := collected[0].LineBytes(0)
+	if string(lineBytes0) != "b" || !collected[0].Matches[0].IsContext {
+		t.Errorf("collected[0] = %q (context=%v), want 'b' (context=true)", lineBytes0, collected[0].Matches[0].IsContext)
 	}
-	if string(collected[1].LineBytes) != "match" || collected[1].IsContext {
-		t.Errorf("collected[1] = %q (context=%v), want 'match' (context=false)", collected[1].LineBytes, collected[1].IsContext)
+	lineBytes1 := collected[1].LineBytes(0)
+	if string(lineBytes1) != "match" || collected[1].Matches[0].IsContext {
+		t.Errorf("collected[1] = %q (context=%v), want 'match' (context=false)", lineBytes1, collected[1].Matches[0].IsContext)
 	}
-	if string(collected[2].LineBytes) != "d" || !collected[2].IsContext {
-		t.Errorf("collected[2] = %q (context=%v), want 'd' (context=true)", collected[2].LineBytes, collected[2].IsContext)
+	lineBytes2 := collected[2].LineBytes(0)
+	if string(lineBytes2) != "d" || !collected[2].Matches[0].IsContext {
+		t.Errorf("collected[2] = %q (context=%v), want 'd' (context=true)", lineBytes2, collected[2].Matches[0].IsContext)
 	}
 }

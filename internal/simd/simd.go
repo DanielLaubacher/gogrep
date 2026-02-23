@@ -107,3 +107,36 @@ func Count(data []byte, c byte) int {
 	archsimd.ClearAVXUpperBits()
 	return count
 }
+
+// ToLowerASCII lowercases ASCII bytes from src into dst using AVX2.
+// dst must be at least len(src) bytes. Non-ASCII bytes are copied unchanged.
+func ToLowerASCII(dst, src []byte) {
+	n := len(src)
+	if n == 0 {
+		return
+	}
+
+	vecA := archsimd.BroadcastUint8x32('A')
+	vecZ := archsimd.BroadcastUint8x32('Z')
+	vec32 := archsimd.BroadcastUint8x32(0x20)
+	i := 0
+
+	for i+32 <= n {
+		chunk := archsimd.LoadUint8x32Slice(src[i:])
+		isUpper := chunk.GreaterEqual(vecA).And(chunk.LessEqual(vecZ))
+		lowered := chunk.Add(vec32.Masked(isUpper))
+		lowered.StoreSlice(dst[i:])
+		i += 32
+	}
+
+	// Scalar tail
+	for ; i < n; i++ {
+		b := src[i]
+		if b >= 'A' && b <= 'Z' {
+			b += 0x20
+		}
+		dst[i] = b
+	}
+
+	archsimd.ClearAVXUpperBits()
+}

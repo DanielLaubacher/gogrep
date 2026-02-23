@@ -59,7 +59,7 @@ func (ow *OrderedWriter) WriteOrdered(results <-chan Result, onMatch func()) {
 	var buf []byte // reused across all writeResult calls
 
 	for r := range results {
-		if r.Err == nil && len(r.Matches) > 0 {
+		if r.Err == nil && r.HasMatch() {
 			if onMatch != nil {
 				onMatch()
 			}
@@ -86,9 +86,15 @@ func (ow *OrderedWriter) WriteOrdered(results <-chan Result, onMatch func()) {
 
 func (ow *OrderedWriter) writeResult(buf []byte, r Result) []byte {
 	if r.Err != nil {
+		if r.Closer != nil {
+			r.Closer()
+		}
 		return buf
 	}
 	buf = ow.formatter.Format(buf[:0], r, ow.multiFile)
+	if r.Closer != nil {
+		r.Closer()
+	}
 	ow.writer.Write(buf)
 	return buf
 }

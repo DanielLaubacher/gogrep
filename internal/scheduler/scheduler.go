@@ -17,12 +17,12 @@ type Scheduler struct {
 	matcher   matcher.Matcher
 	reader    input.Reader
 	filesOnly bool // when true, use MatchExists for faster -l mode
+	countOnly bool // when true, use CountAll for faster -c mode
 }
 
 // New creates a Scheduler with the given number of workers.
 // If workers is 0, defaults to NumCPU * 2.
-// If filesOnly is true, uses fast MatchExists instead of FindAll (for -l mode).
-func New(workers int, m matcher.Matcher, r input.Reader, filesOnly bool) *Scheduler {
+func New(workers int, m matcher.Matcher, r input.Reader, filesOnly bool, countOnly bool) *Scheduler {
 	if workers <= 0 {
 		workers = runtime.NumCPU() * 2
 	}
@@ -31,6 +31,7 @@ func New(workers int, m matcher.Matcher, r input.Reader, filesOnly bool) *Schedu
 		matcher:   m,
 		reader:    r,
 		filesOnly: filesOnly,
+		countOnly: countOnly,
 	}
 }
 
@@ -70,28 +71,40 @@ func (s *Scheduler) processFile(entry walker.FileEntry) output.Result {
 		result.Err = err
 		return result
 	}
-	defer func() {
+
+	closeReader := func() {
 		if readResult.Closer != nil {
 			readResult.Closer()
 		}
-	}()
+	}
 
 	if readResult.Data == nil {
+		closeReader()
 		return result
 	}
 
 	// Binary detection: skip binary files entirely (like ripgrep)
 	if walker.IsBinary(readResult.Data) {
+		closeReader()
 		return result
 	}
 
 	if s.filesOnly {
-		// Fast path: only check if any match exists, skip line boundary computation
 		if s.matcher.MatchExists(readResult.Data) {
-			result.Matches = []matcher.Match{{}} // sentinel: at least one match
+			result.MatchSet = matcher.MatchSet{Matches: []matcher.Match{{}}}
 		}
+		closeReader()
+	} else if s.countOnly {
+		count := s.matcher.CountAll(readResult.Data)
+		result.MatchCount = count
+		closeReader()
 	} else {
-		result.Matches = s.matcher.FindAll(readResult.Data)
+		result.MatchSet = s.matcher.FindAll(readResult.Data)
+		if result.MatchSet.HasMatch() {
+			result.Closer = closeReader
+		} else {
+			closeReader()
+		}
 	}
 	return result
 }

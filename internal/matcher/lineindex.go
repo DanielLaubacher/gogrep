@@ -2,89 +2,206 @@ package matcher
 
 import "bytes"
 
-// lineCursor tracks position while scanning forward through data for line boundaries.
-// Offsets must be processed in sorted (ascending) order.
-// For nearby advances, walks line-by-line. For large gaps, jumps directly
-// to the target position using backward/forward scans + newline counting.
-type lineCursor struct {
-	data      []byte
-	lineNum   int // 1-based line number at lineStart
-	lineStart int // byte offset of current line start
-	lineEnd   int // byte offset of current line end (position of \n, or len(data))
+// snippetFromOffset extracts a line snippet around a match at off in data.
+// Instead of resolving full line boundaries (which may be thousands of bytes
+// away), it looks at most maxCols bytes in each direction and clamps at '\n'.
+// Returns the snippet start offset and length within data.
+//
+// When maxCols <= 0, full line boundaries are resolved (no truncation).
+func snippetFromOffset(data []byte, off int, maxCols int) (snippetStart int, snippetLen int, posInSnippet int) {
+	n := len(data)
+
+	// Determine search bounds
+	var lo, hi int
+	if maxCols > 0 {
+		lo = off - maxCols
+		if lo < 0 {
+			lo = 0
+		}
+		hi = off + maxCols
+		if hi > n {
+			hi = n
+		}
+	} else {
+		lo = 0
+		hi = n
+	}
+
+	// Find line start: last '\n' before off within [lo, off)
+	lineStart := lo
+	if i := bytes.LastIndexByte(data[lo:off], '\n'); i >= 0 {
+		lineStart = lo + i + 1
+	}
+
+	// Find line end: first '\n' at or after off within [off, hi)
+	lineEnd := hi
+	if i := bytes.IndexByte(data[off:hi], '\n'); i >= 0 {
+		lineEnd = off + i
+	}
+
+	return lineStart, lineEnd - lineStart, off - lineStart
 }
 
-// newlineByte avoids allocating []byte{'\n'} on every call to bytes.Count.
-var newlineByte = []byte{'\n'}
+// matchSetFromOffsets converts fixed-length match offsets to a MatchSet.
+// Uses window-based snippet extraction (bounded by maxCols) and incremental
+// bytes.Count for line numbers. O(1) pointer overhead, O(n) total time.
+func matchSetFromOffsets(data []byte, offsets []int, patternLen int, maxCols int, needLineNums bool) MatchSet {
+	if len(offsets) == 0 {
+		return MatchSet{}
+	}
 
-// newLineCursor initializes a cursor at the beginning of data.
-func newLineCursor(data []byte) lineCursor {
-	end := len(data)
-	i := bytes.IndexByte(data, '\n')
-	if i >= 0 {
-		end = i
+	matches := make([]Match, 0, len(offsets))
+	positions := make([][2]int, 0, len(offsets))
+	lastSnippetStart := -1
+	lineNum := 1
+	prevOff := 0
+
+	for _, off := range offsets {
+		snippetStart, snippetLen, posInSnippet := snippetFromOffset(data, off, maxCols)
+
+		if needLineNums {
+			lineNum += bytes.Count(data[prevOff:off], []byte{'\n'})
+			prevOff = off
+		}
+
+		posIdx := len(positions)
+		positions = append(positions, [2]int{posInSnippet, posInSnippet + patternLen})
+
+		if snippetStart == lastSnippetStart {
+			// Same line as previous match — extend its position range
+			last := &matches[len(matches)-1]
+			last.PosCount = posIdx - last.PosIdx + 1
+		} else {
+			matches = append(matches, Match{
+				LineNum:    lineNum,
+				LineStart:  snippetStart,
+				LineLen:    snippetLen,
+				ByteOffset: int64(snippetStart),
+				PosIdx:     posIdx,
+				PosCount:   1,
+			})
+			lastSnippetStart = snippetStart
+		}
 	}
-	return lineCursor{
-		data:      data,
-		lineNum:   1,
-		lineStart: 0,
-		lineEnd:   end,
-	}
+
+	return MatchSet{Data: data, Matches: matches, Positions: positions}
 }
 
-// lineFromPos advances the cursor to the line containing pos and returns line info.
-// pos must be >= the pos from the previous call (sorted order).
-func (c *lineCursor) lineFromPos(pos int) ([]byte, int64, int) {
-	// Already on the right line?
-	if pos < c.lineEnd {
-		return c.data[c.lineStart:c.lineEnd], int64(c.lineStart), c.lineNum
+// matchSetFromLocs converts variable-length match locations to a MatchSet.
+func matchSetFromLocs(data []byte, locs [][]int, maxCols int, needLineNums bool) MatchSet {
+	if len(locs) == 0 {
+		return MatchSet{}
 	}
 
-	// If the gap is small, walk line by line (avoids overhead of Count + LastIndexByte).
-	// Threshold: if pos is within ~256 bytes, walking is cheaper than jumping.
-	if pos-c.lineEnd <= 256 {
-		for pos >= c.lineEnd && c.lineEnd < len(c.data) {
-			c.lineStart = c.lineEnd + 1
-			c.lineNum++
-			i := bytes.IndexByte(c.data[c.lineStart:], '\n')
+	matches := make([]Match, 0, len(locs))
+	positions := make([][2]int, 0, len(locs))
+	lastSnippetStart := -1
+	lineNum := 1
+	prevOff := 0
+
+	for _, loc := range locs {
+		matchStart, matchEnd := loc[0], loc[1]
+
+		snippetStart, snippetLen, posInSnippet := snippetFromOffset(data, matchStart, maxCols)
+
+		if needLineNums {
+			lineNum += bytes.Count(data[prevOff:matchStart], []byte{'\n'})
+			prevOff = matchStart
+		}
+
+		posEnd := posInSnippet + (matchEnd - matchStart)
+		if posEnd > snippetLen {
+			posEnd = snippetLen
+		}
+
+		posIdx := len(positions)
+		positions = append(positions, [2]int{posInSnippet, posEnd})
+
+		if snippetStart == lastSnippetStart {
+			last := &matches[len(matches)-1]
+			last.PosCount = posIdx - last.PosIdx + 1
+		} else {
+			matches = append(matches, Match{
+				LineNum:    lineNum,
+				LineStart:  snippetStart,
+				LineLen:    snippetLen,
+				ByteOffset: int64(snippetStart),
+				PosIdx:     posIdx,
+				PosCount:   1,
+			})
+			lastSnippetStart = snippetStart
+		}
+	}
+
+	return MatchSet{Data: data, Matches: matches, Positions: positions}
+}
+
+// countUniqueLines counts how many distinct lines contain at least one offset.
+// Offsets must be sorted ascending.
+func countUniqueLines(data []byte, offsets []int) int {
+	if len(offsets) == 0 {
+		return 0
+	}
+
+	count := 0
+	lineEnd := -1
+
+	for _, off := range offsets {
+		if off > lineEnd {
+			count++
+			i := bytes.IndexByte(data[off:], '\n')
 			if i >= 0 {
-				c.lineEnd = c.lineStart + i
+				lineEnd = off + i
 			} else {
-				c.lineEnd = len(c.data)
+				lineEnd = len(data)
 			}
 		}
-		return c.data[c.lineStart:c.lineEnd], int64(c.lineStart), c.lineNum
 	}
 
-	// Large gap: jump directly to pos.
-	// Count newlines in the skipped region to update line number.
-	// Find line start by scanning backward from pos.
-	// Find line end by scanning forward from pos.
-	gapStart := c.lineEnd // start counting from current line end
-	nlCount := bytes.Count(c.data[gapStart:pos], newlineByte)
-	c.lineNum += nlCount
+	return count
+}
 
-	// Find line start: last \n before pos
-	start := 0
-	if pos > 0 {
-		i := bytes.LastIndexByte(c.data[gapStart:pos], '\n')
-		if i >= 0 {
-			start = gapStart + i + 1
+// countInvert counts lines where matchFunc returns true.
+func countInvert(data []byte, matchFunc func(line []byte) bool) int {
+	count := 0
+	for len(data) > 0 {
+		idx := bytes.IndexByte(data, '\n')
+		var line []byte
+		if idx >= 0 {
+			line = data[:idx]
+			data = data[idx+1:]
 		} else {
-			// No newline between gapStart and pos — still on same line
-			// (but we already counted nlCount which should be 0 here)
-			start = c.lineStart
+			line = data
+			data = nil
+		}
+		if matchFunc(line) {
+			count++
+		}
+	}
+	return count
+}
+
+// countLocsUniqueLines counts how many distinct lines contain at least one loc.
+func countLocsUniqueLines(data []byte, locs [][]int) int {
+	if len(locs) == 0 {
+		return 0
+	}
+
+	count := 0
+	lineEnd := -1
+
+	for _, loc := range locs {
+		off := loc[0]
+		if off > lineEnd {
+			count++
+			i := bytes.IndexByte(data[off:], '\n')
+			if i >= 0 {
+				lineEnd = off + i
+			} else {
+				lineEnd = len(data)
+			}
 		}
 	}
 
-	// Find line end: next \n at or after pos
-	end := len(c.data)
-	i := bytes.IndexByte(c.data[pos:], '\n')
-	if i >= 0 {
-		end = pos + i
-	}
-
-	c.lineStart = start
-	c.lineEnd = end
-
-	return c.data[c.lineStart:c.lineEnd], int64(c.lineStart), c.lineNum
+	return count
 }
