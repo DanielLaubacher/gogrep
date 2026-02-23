@@ -26,8 +26,11 @@ func IndexAll(data, pattern []byte) []int {
 		return nil
 	}
 
+	// Collect into a non-escaping stack buffer first, then copy to heap
+	// only if we found matches. This avoids a 128-byte heap alloc on no-match.
 	var stackBuf [16]int
-	offsets := stackBuf[:0]
+	n := 0
+	var overflow []int
 	i := 0
 
 	for {
@@ -35,20 +38,35 @@ func IndexAll(data, pattern []byte) []int {
 		if idx < 0 {
 			break
 		}
-		offsets = append(offsets, i+idx)
+		if n < len(stackBuf) {
+			stackBuf[n] = i + idx
+		} else {
+			if overflow == nil {
+				overflow = make([]int, 0, 64)
+				overflow = append(overflow, stackBuf[:]...)
+			}
+			overflow = append(overflow, i+idx)
+		}
+		n++
 		i += idx + plen
 	}
 
-	if len(offsets) == 0 {
+	if n == 0 {
 		return nil
 	}
-	return offsets
+	if overflow != nil {
+		return overflow
+	}
+	result := make([]int, n)
+	copy(result, stackBuf[:n])
+	return result
 }
 
 // indexAllByte returns all byte offsets where byte c occurs in data.
 func indexAllByte(data []byte, c byte) []int {
 	var stackBuf [16]int
-	offsets := stackBuf[:0]
+	n := 0
+	var overflow []int
 	needle := archsimd.BroadcastUint8x32(c)
 	i := 0
 
@@ -58,7 +76,16 @@ func indexAllByte(data []byte, c byte) []int {
 		b := mask.ToBits()
 		for b != 0 {
 			j := bits.TrailingZeros32(b)
-			offsets = append(offsets, i+j)
+			if n < len(stackBuf) {
+				stackBuf[n] = i + j
+			} else {
+				if overflow == nil {
+					overflow = make([]int, 0, 64)
+					overflow = append(overflow, stackBuf[:]...)
+				}
+				overflow = append(overflow, i+j)
+			}
+			n++
 			b &= b - 1
 		}
 		i += 32
@@ -66,15 +93,29 @@ func indexAllByte(data []byte, c byte) []int {
 
 	for ; i < len(data); i++ {
 		if data[i] == c {
-			offsets = append(offsets, i)
+			if n < len(stackBuf) {
+				stackBuf[n] = i
+			} else {
+				if overflow == nil {
+					overflow = make([]int, 0, 64)
+					overflow = append(overflow, stackBuf[:]...)
+				}
+				overflow = append(overflow, i)
+			}
+			n++
 		}
 	}
 
 	archsimd.ClearAVXUpperBits()
-	if len(offsets) == 0 {
+	if n == 0 {
 		return nil
 	}
-	return offsets
+	if overflow != nil {
+		return overflow
+	}
+	result := make([]int, n)
+	copy(result, stackBuf[:n])
+	return result
 }
 
 // IndexCaseInsensitive returns the index of the first case-insensitive occurrence of pattern in data.
@@ -158,7 +199,8 @@ func IndexAllCaseInsensitive(data, patternLower []byte) []int {
 	bLastHi := archsimd.BroadcastUint8x32(lastHi)
 
 	var stackBuf [16]int
-	offsets := stackBuf[:0]
+	n := 0
+	var overflow []int
 	i := 0
 	limit := len(data) - plen + 1
 
@@ -174,7 +216,16 @@ func IndexAllCaseInsensitive(data, patternLower []byte) []int {
 			j := bits.TrailingZeros32(b)
 			pos := i + j
 			if matchCaseInsensitive(data[pos:pos+plen], patternLower) {
-				offsets = append(offsets, pos)
+				if n < len(stackBuf) {
+					stackBuf[n] = pos
+				} else {
+					if overflow == nil {
+						overflow = make([]int, 0, 64)
+						overflow = append(overflow, stackBuf[:]...)
+					}
+					overflow = append(overflow, pos)
+				}
+				n++
 				skipTo := j + plen
 				if skipTo < 32 {
 					b >>= skipTo
@@ -192,16 +243,30 @@ func IndexAllCaseInsensitive(data, patternLower []byte) []int {
 
 	for ; i < limit; i++ {
 		if matchCaseInsensitive(data[i:i+plen], patternLower) {
-			offsets = append(offsets, i)
+			if n < len(stackBuf) {
+				stackBuf[n] = i
+			} else {
+				if overflow == nil {
+					overflow = make([]int, 0, 64)
+					overflow = append(overflow, stackBuf[:]...)
+				}
+				overflow = append(overflow, i)
+			}
+			n++
 			i += plen - 1
 		}
 	}
 
 	archsimd.ClearAVXUpperBits()
-	if len(offsets) == 0 {
+	if n == 0 {
 		return nil
 	}
-	return offsets
+	if overflow != nil {
+		return overflow
+	}
+	result := make([]int, n)
+	copy(result, stackBuf[:n])
+	return result
 }
 
 func matchCaseInsensitive(data, patternLower []byte) bool {
