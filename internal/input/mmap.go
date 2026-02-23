@@ -2,6 +2,7 @@ package input
 
 import (
 	"fmt"
+	"sync/atomic"
 	"syscall"
 
 	"golang.org/x/sys/unix"
@@ -101,11 +102,23 @@ func (r *adaptiveReader) Read(path string) (ReadResult, error) {
 	return readBuffered(fd, size)
 }
 
+// noatimeWorks tracks whether O_NOATIME is usable (requires file ownership or CAP_FOWNER).
+// Starts as 1 (try it); set to 0 after the first EPERM, avoiding repeated failed syscalls.
+var noatimeWorks atomic.Int32
+
+func init() { noatimeWorks.Store(1) }
+
 // openFile opens a file with O_NOATIME, falling back without it.
+// After the first EPERM, all subsequent opens skip O_NOATIME entirely.
 func openFile(path string) (int, error) {
-	fd, err := unix.Open(path, unix.O_RDONLY|unix.O_NOATIME, 0)
-	if err != nil {
-		fd, err = unix.Open(path, unix.O_RDONLY, 0)
+	if noatimeWorks.Load() != 0 {
+		fd, err := unix.Open(path, unix.O_RDONLY|unix.O_NOATIME, 0)
+		if err == nil {
+			return fd, nil
+		}
+		if err == unix.EPERM {
+			noatimeWorks.Store(0)
+		}
 	}
-	return fd, err
+	return unix.Open(path, unix.O_RDONLY, 0)
 }

@@ -5,10 +5,32 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"unsafe"
 
 	"golang.org/x/sys/unix"
 )
+
+// noatimeWorks tracks whether O_NOATIME is usable for directory opens.
+// Starts as 1 (try it); set to 0 after the first EPERM.
+var noatimeWorks atomic.Int32
+
+func init() { noatimeWorks.Store(1) }
+
+// openDir opens a directory with O_NOATIME, falling back without it.
+func openDir(path string) (int, error) {
+	flags := unix.O_RDONLY | unix.O_DIRECTORY
+	if noatimeWorks.Load() != 0 {
+		fd, err := unix.Open(path, flags|unix.O_NOATIME, 0)
+		if err == nil {
+			return fd, nil
+		}
+		if err == unix.EPERM {
+			noatimeWorks.Store(0)
+		}
+	}
+	return unix.Open(path, flags, 0)
+}
 
 // FileEntry represents a file discovered during directory traversal.
 type FileEntry struct {
@@ -21,6 +43,7 @@ type WalkOptions struct {
 	NoIgnore       bool     // skip .gitignore processing
 	Hidden         bool     // include hidden files and directories
 	FollowSymlinks bool     // follow symbolic links
+	IncludeBinary  bool     // include files with known binary extensions (.so, .o, .png, etc.)
 	Globs          []string // include/exclude globs (prefix ! to exclude)
 }
 
@@ -56,6 +79,7 @@ func Walk(roots []string, opts WalkOptions) (<-chan FileEntry, <-chan error) {
 			hidden:         opts.Hidden,
 			noIgnore:       opts.NoIgnore,
 			followSymlinks: opts.FollowSymlinks,
+			includeBinary: opts.IncludeBinary,
 			globs:          opts.Globs,
 		}
 		pw.cond = sync.NewCond(&pw.mu)
@@ -98,6 +122,7 @@ type parallelWalker struct {
 	hidden         bool
 	noIgnore       bool
 	followSymlinks bool
+	includeBinary bool
 	globs          []string
 
 	mu      sync.Mutex
@@ -162,13 +187,10 @@ func (pw *parallelWalker) worker() {
 // The directory fd is closed before returning — not held during subtree traversal.
 // Returns the dirents slice for reuse by the next call.
 func (pw *parallelWalker) processDir(item walkItem, buf []byte, dirents []Dirent) []Dirent {
-	fd, err := unix.Open(item.path, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOATIME, 0)
+	fd, err := openDir(item.path)
 	if err != nil {
-		fd, err = unix.Open(item.path, unix.O_RDONLY|unix.O_DIRECTORY, 0)
-		if err != nil {
-			pw.errCh <- &WalkError{Path: item.path, Err: err}
-			return dirents
-		}
+		pw.errCh <- &WalkError{Path: item.path, Err: err}
+		return dirents
 	}
 
 	// Collect subdirectories to enqueue after closing the fd.
@@ -212,6 +234,9 @@ func (pw *parallelWalker) processDir(item walkItem, buf []byte, dirents []Dirent
 				if !pw.hidden && len(entry.Name) > 0 && entry.Name[0] == '.' {
 					continue
 				}
+				if !pw.includeBinary && IsBinaryExtension(entry.Name) {
+					continue
+				}
 				if item.ignores != nil && isIgnoredByLayers(item.ignores, fullPath, false) {
 					continue
 				}
@@ -230,6 +255,9 @@ func (pw *parallelWalker) processDir(item walkItem, buf []byte, dirents []Dirent
 				}
 				if stat.Mode&unix.S_IFMT == unix.S_IFREG {
 					if !pw.hidden && len(entry.Name) > 0 && entry.Name[0] == '.' {
+						continue
+					}
+					if !pw.includeBinary && IsBinaryExtension(entry.Name) {
 						continue
 					}
 					if item.ignores != nil && isIgnoredByLayers(item.ignores, fullPath, false) {
@@ -267,6 +295,9 @@ func (pw *parallelWalker) processDir(item walkItem, buf []byte, dirents []Dirent
 				mode := stat.Mode & unix.S_IFMT
 				if mode == unix.S_IFREG {
 					if !pw.hidden && len(entry.Name) > 0 && entry.Name[0] == '.' {
+						continue
+					}
+					if !pw.includeBinary && IsBinaryExtension(entry.Name) {
 						continue
 					}
 					if item.ignores != nil && isIgnoredByLayers(item.ignores, fullPath, false) {
