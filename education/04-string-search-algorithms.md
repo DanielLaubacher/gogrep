@@ -29,7 +29,7 @@ This document is an exhaustive reference on the pattern matching algorithms used
 
 ## 1. The Matcher Interface
 
-**File:** `/home/dl/dev/gogrep/internal/matcher/match.go`
+**File:** `internal/matcher/match.go`
 
 All pattern matching in gogrep is abstracted behind a single interface:
 
@@ -148,7 +148,7 @@ The 50x throughput difference between no-match and dense-match shows clearly how
 
 ## 3. Line Extraction and Snippet Resolution
 
-**File:** `/home/dl/dev/gogrep/internal/matcher/lineindex.go`
+**File:** `internal/matcher/lineindex.go`
 
 Once a search returns a match offset (a byte position in the file buffer), gogrep must determine the line that contains that offset. This is the job of `snippetFromOffset`.
 
@@ -221,7 +221,7 @@ These are not hand-written loops. Go's `bytes.IndexByte` and `bytes.LastIndexByt
 
 ## 4. Incremental Line Number Computation
 
-**File:** `/home/dl/dev/gogrep/internal/matcher/lineindex.go`, function `matchSetFromOffsets`
+**File:** `internal/matcher/lineindex.go`, function `matchSetFromOffsets`
 
 Computing line numbers is one of the hidden costs in a grep tool. The naive approach -- counting all newlines from the start of the file to the match offset -- is O(file size) per match. For a file with 1000 matches, that would be O(1000 * file size).
 
@@ -262,7 +262,7 @@ The `needLineNums` field is set based on whether the output format actually requ
 
 ## 5. Match Deduplication
 
-**File:** `/home/dl/dev/gogrep/internal/matcher/lineindex.go`, function `matchSetFromOffsets`
+**File:** `internal/matcher/lineindex.go`, function `matchSetFromOffsets`
 
 When multiple match offsets fall on the same line, gogrep must not create duplicate `Match` structs. Consider searching for "the" in the line `"the quick brown the lazy"`. The search finds offsets at positions 0 and 16, but both are on the same line. The output should show the line once, with two highlight positions.
 
@@ -314,7 +314,7 @@ Using `snippetStart` instead of `lineNum` for deduplication is a subtle correctn
 
 ## 6. BoyerMooreMatcher: Fixed String Search
 
-**File:** `/home/dl/dev/gogrep/internal/matcher/boyermoore.go`
+**File:** `internal/matcher/boyermoore.go`
 
 For single fixed patterns (the most common grep use case), gogrep uses `BoyerMooreMatcher`. Despite its name, the actual search is delegated to optimized lower-level functions rather than implementing the classic Boyer-Moore algorithm directly.
 
@@ -432,8 +432,8 @@ Custom SIMD only wins for case-insensitive search, where the stdlib has no equiv
 ## 7. The SIMD Acceleration Layer
 
 **Files:**
-- `/home/dl/dev/gogrep/internal/simd/simd.go` -- single-byte operations (IndexByte, LastIndexByte, Count, ToLowerASCII)
-- `/home/dl/dev/gogrep/internal/simd/index.go` -- multi-byte operations (Index, IndexAll, IndexCaseInsensitive, IndexAllCaseInsensitive)
+- `internal/simd/simd.go` -- single-byte operations (IndexByte, LastIndexByte, Count, ToLowerASCII)
+- `internal/simd/index.go` -- multi-byte operations (Index, IndexAll, IndexCaseInsensitive, IndexAllCaseInsensitive)
 
 The SIMD layer provides the low-level search primitives that the matchers use. It is built on Go 1.26's `simd/archsimd` package, which exposes AVX2 intrinsics as Go functions.
 
@@ -623,7 +623,7 @@ This is a simple byte-by-byte comparison with ASCII lowering. It is only called 
 
 ### AVX2 ToLowerASCII
 
-**File:** `/home/dl/dev/gogrep/internal/simd/simd.go`
+**File:** `internal/simd/simd.go`
 
 For bulk lowercasing (used in some internal paths), the SIMD layer provides an AVX2-accelerated `ToLowerASCII`:
 
@@ -654,7 +654,7 @@ This converts uppercase ASCII letters to lowercase 32 bytes at a time:
 
 ## 8. AhoCorasickMatcher: Multi-Pattern Search
 
-**File:** `/home/dl/dev/gogrep/internal/matcher/ahocorasick.go`
+**File:** `internal/matcher/ahocorasick.go`
 
 When multiple fixed patterns are given (e.g., `gogrep -F -e 'error' -e 'warning' -e 'fatal'`), gogrep uses the Aho-Corasick algorithm. This is a fundamentally different approach from running Boyer-Moore once per pattern -- it searches for all patterns simultaneously in a single pass.
 
@@ -859,7 +859,7 @@ This is identical to `searchLine` but returns `true` immediately on the first ma
 
 ## 9. RegexMatcher: RE2 Engine
 
-**File:** `/home/dl/dev/gogrep/internal/matcher/regex.go`
+**File:** `internal/matcher/regex.go`
 
 For patterns containing regex metacharacters (`\.+*?()|[]{}^$`), gogrep uses Go's `regexp` package, which implements the RE2 algorithm.
 
@@ -945,7 +945,7 @@ func (m *RegexMatcher) CountAll(data []byte) int {
 
 ## 10. PCREMatcher: Perl-Compatible Regex
 
-**File:** `/home/dl/dev/gogrep/internal/matcher/pcre.go`
+**File:** `internal/matcher/pcre.go`
 
 For patterns requiring PCRE2 features (lookahead `(?=...)`, lookbehind `(?<=...)`, backreferences `\1`, atomic groups `(?>...)`, possessive quantifiers `++`, conditional patterns, etc.), gogrep supports PCRE2 via the `go.elara.ws/pcre` package.
 
@@ -1016,7 +1016,7 @@ PCRE is only activated when the user explicitly passes the `-P` flag. It is neve
 
 ## 11. Matcher Selection Heuristic
 
-**File:** `/home/dl/dev/gogrep/internal/matcher/factory.go`
+**File:** `internal/matcher/factory.go`
 
 The `NewMatcher` factory function selects the most efficient matcher for the given patterns:
 
@@ -1080,7 +1080,7 @@ Automatically detecting literal patterns and routing them to `BoyerMooreMatcher`
 
 ## 12. ContextMatcher: Before/After Lines
 
-**File:** `/home/dl/dev/gogrep/internal/matcher/context.go`
+**File:** `internal/matcher/context.go`
 
 The `ContextMatcher` wraps any inner `Matcher` to add `-B` (before), `-A` (after), and `-C` (context) support. This is the one place where gogrep uses the split-then-search approach rather than search-then-split.
 
@@ -1294,7 +1294,7 @@ This is a generic split-and-test loop. The `matchFunc` parameter is a closure th
 
 ## 14. The MatchSet Data Model
 
-**File:** `/home/dl/dev/gogrep/internal/matcher/match.go`
+**File:** `internal/matcher/match.go`
 
 The `MatchSet` and `Match` types are carefully designed to minimize garbage collection pressure.
 
@@ -1361,7 +1361,7 @@ This avoids allocating a separate `[][2]int` slice per match. All positions are 
 
 ## 15. Counting Lines Without Allocating Matches
 
-**File:** `/home/dl/dev/gogrep/internal/matcher/lineindex.go`
+**File:** `internal/matcher/lineindex.go`
 
 The `countUniqueLines` function is used by `CountAll` to count matching lines without building `Match` structs.
 
@@ -1505,13 +1505,13 @@ Key observations:
 
 | File | Purpose |
 |------|---------|
-| `/home/dl/dev/gogrep/internal/matcher/match.go` | Matcher interface, Match struct, MatchSet struct |
-| `/home/dl/dev/gogrep/internal/matcher/boyermoore.go` | BoyerMooreMatcher (single fixed pattern, SIMD) |
-| `/home/dl/dev/gogrep/internal/matcher/ahocorasick.go` | AhoCorasickMatcher (multi-pattern automaton) |
-| `/home/dl/dev/gogrep/internal/matcher/regex.go` | RegexMatcher (RE2 engine) |
-| `/home/dl/dev/gogrep/internal/matcher/pcre.go` | PCREMatcher (PCRE2 via pure Go port) |
-| `/home/dl/dev/gogrep/internal/matcher/factory.go` | NewMatcher factory, isLiteral detection |
-| `/home/dl/dev/gogrep/internal/matcher/lineindex.go` | snippetFromOffset, matchSetFromOffsets, countUniqueLines |
-| `/home/dl/dev/gogrep/internal/matcher/context.go` | ContextMatcher (before/after context lines) |
-| `/home/dl/dev/gogrep/internal/simd/simd.go` | AVX2 primitives: IndexByte, LastIndexByte, Count, ToLowerASCII |
-| `/home/dl/dev/gogrep/internal/simd/index.go` | Multi-byte search: Index, IndexAll, IndexCaseInsensitive, IndexAllCaseInsensitive |
+| `internal/matcher/match.go` | Matcher interface, Match struct, MatchSet struct |
+| `internal/matcher/boyermoore.go` | BoyerMooreMatcher (single fixed pattern, SIMD) |
+| `internal/matcher/ahocorasick.go` | AhoCorasickMatcher (multi-pattern automaton) |
+| `internal/matcher/regex.go` | RegexMatcher (RE2 engine) |
+| `internal/matcher/pcre.go` | PCREMatcher (PCRE2 via pure Go port) |
+| `internal/matcher/factory.go` | NewMatcher factory, isLiteral detection |
+| `internal/matcher/lineindex.go` | snippetFromOffset, matchSetFromOffsets, countUniqueLines |
+| `internal/matcher/context.go` | ContextMatcher (before/after context lines) |
+| `internal/simd/simd.go` | AVX2 primitives: IndexByte, LastIndexByte, Count, ToLowerASCII |
+| `internal/simd/index.go` | Multi-byte search: Index, IndexAll, IndexCaseInsensitive, IndexAllCaseInsensitive |

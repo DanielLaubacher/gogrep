@@ -200,7 +200,7 @@ an additional `Lstat` call per entry.
 
 gogrep calls `unix.Getdents` directly and parses the raw kernel response.
 
-**Source: `/home/dl/dev/gogrep/internal/walker/walker.go`, lines 173-184**
+**Source: `internal/walker/walker.go`, lines 173-184**
 
 ```go
 // worker processes directories from the work queue until all work is done.
@@ -222,7 +222,7 @@ The 32KB buffer is allocated once per worker goroutine and reused for every
 directory that worker processes. The `dirents` slice is similarly reused. In
 the `processDir` method, the inner loop calls `unix.Getdents` directly:
 
-**Source: `/home/dl/dev/gogrep/internal/walker/walker.go`, lines 199-209**
+**Source: `internal/walker/walker.go`, lines 199-209**
 
 ```go
 for {
@@ -276,7 +276,7 @@ Offset  Field       Bytes   Value
 
 ### Parsing the Raw Buffer
 
-**Source: `/home/dl/dev/gogrep/internal/walker/dirent.go`**
+**Source: `internal/walker/dirent.go`**
 
 ```go
 // File type constants from dirent.h
@@ -467,7 +467,7 @@ gogrep implements a "try once, cache the result" strategy using `atomic.Int32`.
 This pattern appears in two places because the input and walker packages are
 independent (they do not share state by design).
 
-**Source: `/home/dl/dev/gogrep/internal/input/mmap.go`, lines 106-124**
+**Source: `internal/input/mmap.go`, lines 106-124**
 
 ```go
 // noatimeWorks tracks whether O_NOATIME is usable (requires file ownership or CAP_FOWNER).
@@ -492,7 +492,7 @@ func openFile(path string) (int, error) {
 }
 ```
 
-**Source: `/home/dl/dev/gogrep/internal/walker/walker.go`, lines 14-33**
+**Source: `internal/walker/walker.go`, lines 14-33**
 
 ```go
 // noatimeWorks tracks whether O_NOATIME is usable for directory opens.
@@ -595,7 +595,7 @@ where `PrepOpenat` uses `AT_FDCWD` as the directory file descriptor.
 A recurring pattern in gogrep is: open a file, then immediately stat it using
 the file descriptor rather than the path.
 
-**Source: `/home/dl/dev/gogrep/internal/input/mmap.go`, lines 47-65**
+**Source: `internal/input/mmap.go`, lines 47-65**
 
 ```go
 func (r *MmapReader) Read(path string) (ReadResult, error) {
@@ -723,7 +723,7 @@ the fd's position. This saves one syscall compared to `lseek + read`.
 
 ### gogrep's pread Loop
 
-**Source: `/home/dl/dev/gogrep/internal/input/buffered.go`, lines 51-76**
+**Source: `internal/input/buffered.go`, lines 51-76**
 
 ```go
 // readBuffered reads a file from an already-open fd into a pooled buffer.
@@ -781,7 +781,7 @@ correctness demands handling the partial-read case.
 
 The watch module also uses `pread` to read only newly appended content:
 
-**Source: `/home/dl/dev/gogrep/internal/watch/watch.go`, lines 198-238**
+**Source: `internal/watch/watch.go`, lines 198-238**
 
 ```go
 func (w *Watcher) ReadNew(path string) ([]byte, error) {
@@ -870,7 +870,7 @@ Accessing byte at offset 50000:
 
 ### gogrep's mmap Implementation
 
-**Source: `/home/dl/dev/gogrep/internal/input/mmap.go`, lines 20-45**
+**Source: `internal/input/mmap.go`, lines 20-45**
 
 ```go
 // readMmap memory-maps an already-opened fd of known size.
@@ -928,7 +928,7 @@ match is found early, the remaining pages are never loaded.
 gogrep does not always use mmap. The `adaptiveReader` chooses between buffered
 pread and mmap based on file size:
 
-**Source: `/home/dl/dev/gogrep/internal/input/mmap.go`, lines 67-103**
+**Source: `internal/input/mmap.go`, lines 67-103**
 
 ```go
 func NewAdaptiveReader(mmapThreshold int64) Reader {
@@ -1014,7 +1014,7 @@ have significant effects.
 `posix_fadvise(fd, offset, len, advice)` advises the kernel about expected
 access patterns for a file descriptor.
 
-**Source: `/home/dl/dev/gogrep/internal/input/mmap.go`, line 22**
+**Source: `internal/input/mmap.go`, line 22**
 
 ```go
 unix.Fadvise(fd, 0, size, unix.FADV_SEQUENTIAL)
@@ -1049,7 +1049,7 @@ Other `fadvise` values (not used by gogrep but worth knowing):
 `madvise(addr, length, advice)` is similar to `fadvise` but operates on memory
 mappings rather than file descriptors.
 
-**Source: `/home/dl/dev/gogrep/internal/input/mmap.go`, line 34**
+**Source: `internal/input/mmap.go`, line 34**
 
 ```go
 unix.Madvise(data, unix.MADV_SEQUENTIAL)
@@ -1060,7 +1060,7 @@ operates on the page fault handler rather than the read syscall handler. When
 a page fault occurs in this mapping, the kernel knows to readahead aggressively
 and to free pages behind the fault address.
 
-**Source: `/home/dl/dev/gogrep/internal/input/mmap.go`, line 39 (in the Closer)**
+**Source: `internal/input/mmap.go`, line 39 (in the Closer)**
 
 ```go
 unix.Madvise(data, unix.MADV_DONTNEED)
@@ -1115,7 +1115,7 @@ struct iovec {
 
 ### gogrep's writev Writer
 
-**Source: `/home/dl/dev/gogrep/internal/output/writer.go`**
+**Source: `internal/output/writer.go`**
 
 ```go
 // Writer writes formatted output to stdout, using writev for scatter-gather I/O.
@@ -1204,7 +1204,7 @@ Output ordering is critical for deterministic results. When multiple workers
 process files in parallel, results arrive out of order. The `OrderedWriter`
 buffers out-of-order results and emits them in sequence:
 
-**Source: `/home/dl/dev/gogrep/internal/output/writer.go`, lines 56-85**
+**Source: `internal/output/writer.go`, lines 56-85**
 
 ```go
 func (ow *OrderedWriter) WriteOrdered(results <-chan Result, onMatch func()) {
@@ -1274,7 +1274,7 @@ allows a process to subscribe to filesystem events. The API has three syscalls:
 3. **`read(ifd, buf, len)`**: Read events from the inotify fd (blocking or
    non-blocking depending on flags).
 
-**Source: `/home/dl/dev/gogrep/internal/watch/watch.go`, lines 38-68**
+**Source: `internal/watch/watch.go`, lines 38-68**
 
 ```go
 func New() (*Watcher, error) {
@@ -1325,7 +1325,7 @@ check for shutdown (`w.done` channel) between event reads.
 
 ### Adding Watches
 
-**Source: `/home/dl/dev/gogrep/internal/watch/watch.go`, lines 72-94**
+**Source: `internal/watch/watch.go`, lines 72-94**
 
 ```go
 func (w *Watcher) Add(path string) error {
@@ -1382,7 +1382,7 @@ between reads. Without epoll, a blocking `read` would hang forever if no
 events arrive and the user presses Ctrl+C. With epoll's timeout parameter,
 the loop wakes up every 100ms to check for shutdown:
 
-**Source: `/home/dl/dev/gogrep/internal/watch/watch.go`, lines 97-138**
+**Source: `internal/watch/watch.go`, lines 97-138**
 
 ```go
 func (w *Watcher) Events() <-chan Event {
@@ -1464,7 +1464,7 @@ The `cookie` field is used to correlate `IN_MOVED_FROM` and `IN_MOVED_TO`
 events (they share the same cookie value). gogrep does not use it because it
 does not watch for `IN_MOVED_FROM`.
 
-**Source: `/home/dl/dev/gogrep/internal/watch/watch.go`, lines 141-194**
+**Source: `internal/watch/watch.go`, lines 141-194**
 
 ```go
 const inotifyEventSize = 16
@@ -1540,7 +1540,7 @@ alignment by reading individual bytes.
 ## io_uring -- When "Faster" Syscalls Are Actually Slower
 
 gogrep includes a complete pure-Go io_uring wrapper at
-`/home/dl/dev/gogrep/internal/uring/`. It was built, benchmarked extensively,
+`internal/uring/`. It was built, benchmarked extensively,
 and found to be **1.3x to 3.6x slower** than direct syscalls for grep
 workloads. This section explains what io_uring is, how the wrapper works, and
 why it lost.
@@ -1581,7 +1581,7 @@ syscall count drops from 4N to approximately N/batch_size.
 
 ### The Ring Setup
 
-**Source: `/home/dl/dev/gogrep/internal/uring/uring.go`, lines 143-162**
+**Source: `internal/uring/uring.go`, lines 143-162**
 
 ```go
 func NewRing(entries uint32) (*Ring, error) {
@@ -1622,7 +1622,7 @@ goroutine scheduler's P (processor) management.
 
 ### Memory-Mapped Ring Buffers
 
-**Source: `/home/dl/dev/gogrep/internal/uring/uring.go`, lines 164-219**
+**Source: `internal/uring/uring.go`, lines 164-219**
 
 The rings are mapped into user space via `mmap`:
 
@@ -1685,7 +1685,7 @@ as the synchronization mechanism.
 
 ### Submitting Operations
 
-**Source: `/home/dl/dev/gogrep/internal/uring/uring.go`, lines 243-278**
+**Source: `internal/uring/uring.go`, lines 243-278**
 
 ```go
 func (r *Ring) SubmitAndWait(count uint32, fn func(cqe *CQE)) error {
@@ -1748,7 +1748,7 @@ the atomic is correct for all architectures and communicates intent.
 
 ### SQE Operation Types
 
-**Source: `/home/dl/dev/gogrep/internal/uring/ops.go`**
+**Source: `internal/uring/ops.go`**
 
 The wrapper supports four io_uring opcodes for the grep workflow:
 

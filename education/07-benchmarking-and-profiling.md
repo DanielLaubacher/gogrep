@@ -38,7 +38,7 @@ The framework determines how many iterations to run by measuring wall-clock time
 
 ### Go 1.24+ b.Loop() Style
 
-gogrep uses the modern `b.Loop()` style introduced in Go 1.24, as seen throughout the benchmark files. Here is the canonical example from `/home/dl/dev/gogrep/internal/matcher/boyermoore_test.go`:
+gogrep uses the modern `b.Loop()` style introduced in Go 1.24, as seen throughout the benchmark files. Here is the canonical example from `internal/matcher/boyermoore_test.go`:
 
 ```go
 func BenchmarkBoyerMoore_ShortPattern(b *testing.B) {
@@ -80,7 +80,7 @@ Without `b.SetBytes`, the output only shows `ns/op`. With it, you also get `MB/s
 
 **`b.ReportAllocs()`** -- Explicitly enables per-operation allocation reporting within the benchmark function. This is an alternative to the `-benchmem` command-line flag. If you want allocation tracking to always appear for a specific benchmark regardless of command-line flags, call this in the benchmark body. In gogrep's codebase, `-benchmem` is used at the command line instead (via the Makefile), so `b.ReportAllocs()` is not called explicitly.
 
-**`b.TempDir()`** -- Creates a temporary directory that is automatically cleaned up when the benchmark finishes. The input benchmarks in `/home/dl/dev/gogrep/internal/input/input_test.go` use this to create temporary files for I/O benchmarks:
+**`b.TempDir()`** -- Creates a temporary directory that is automatically cleaned up when the benchmark finishes. The input benchmarks in `internal/input/input_test.go` use this to create temporary files for I/O benchmarks:
 
 ```go
 func BenchmarkBufferedReader(b *testing.B) {
@@ -104,7 +104,7 @@ func BenchmarkBufferedReader(b *testing.B) {
 }
 ```
 
-**`b.Fatal()` and `b.Fatalf()`** -- Stop the benchmark immediately on error. Used in setup code when constructing matchers that can fail (e.g., PCRE pattern compilation in `/home/dl/dev/gogrep/internal/matcher/pcre_test.go`):
+**`b.Fatal()` and `b.Fatalf()`** -- Stop the benchmark immediately on error. Used in setup code when constructing matchers that can fail (e.g., PCRE pattern compilation in `internal/matcher/pcre_test.go`):
 
 ```go
 func BenchmarkPCRE_Simple(b *testing.B) {
@@ -136,7 +136,7 @@ GOEXPERIMENT=simd go test -bench=. -benchmem -count=10 ./internal/matcher/
 make bench
 ```
 
-The `make bench` target is defined in `/home/dl/dev/gogrep/Makefile`:
+The `make bench` target is defined in `Makefile`:
 
 ```makefile
 bench:
@@ -256,7 +256,7 @@ This gives exactly 10 matches in 10,000 lines (1 in 1,000), which is realistic f
 
 ### internal/matcher/ Benchmarks
 
-Source files: `/home/dl/dev/gogrep/internal/matcher/boyermoore_test.go`, `/home/dl/dev/gogrep/internal/matcher/ahocorasick_test.go`, `/home/dl/dev/gogrep/internal/matcher/pcre_test.go`
+Source files: `internal/matcher/boyermoore_test.go`, `internal/matcher/ahocorasick_test.go`, `internal/matcher/pcre_test.go`
 
 | Benchmark | What It Measures | Data | Key Details |
 |---|---|---|---|
@@ -277,7 +277,7 @@ Source files: `/home/dl/dev/gogrep/internal/matcher/boyermoore_test.go`, `/home/
 
 ### internal/simd/ Benchmarks
 
-Source files: `/home/dl/dev/gogrep/internal/simd/simd_test.go`, `/home/dl/dev/gogrep/internal/simd/index_test.go`
+Source files: `internal/simd/simd_test.go`, `internal/simd/index_test.go`
 
 | Benchmark | What It Measures | Notes |
 |---|---|---|
@@ -304,7 +304,7 @@ A critical finding documented in the project memory: Go's stdlib `bytes.IndexByt
 
 ### internal/input/ Benchmarks
 
-Source file: `/home/dl/dev/gogrep/internal/input/input_test.go`
+Source file: `internal/input/input_test.go`
 
 | Benchmark | What It Measures | Data | Syscall Sequence |
 |---|---|---|---|
@@ -451,7 +451,7 @@ func good() []int {
 }
 ```
 
-gogrep uses this pattern in `IndexAll` (`/home/dl/dev/gogrep/internal/simd/index.go`):
+gogrep uses this pattern in `IndexAll` (`internal/simd/index.go`):
 
 ```go
 var stackBuf [16]int  // stays on stack
@@ -530,7 +530,7 @@ Go's `runtime/pprof` package samples the program counter of every goroutine at ~
 
 ### gogrep's Built-In Profiling Support
 
-gogrep has `--cpuprofile` and `--memprofile` flags built into the main binary. From `/home/dl/dev/gogrep/cmd/gogrep/main.go`:
+gogrep has `--cpuprofile` and `--memprofile` flags built into the main binary. From `cmd/gogrep/main.go`:
 
 ```go
 // CPU profiling
@@ -657,7 +657,7 @@ Common gogrep hotspots in a flame graph:
 
 ### The Profiling Script
 
-gogrep includes `/home/dl/dev/gogrep/scripts/profile.sh` which automates benchmarking and profiling:
+gogrep includes `scripts/profile.sh` which automates benchmarking and profiling:
 
 ```bash
 # Run all benchmarks + profile
@@ -932,7 +932,7 @@ Key numbers:
 
 ### gogrep's Benchmark Scripts
 
-**`/home/dl/dev/gogrep/scripts/benchmark.sh`** -- Comparative benchmarks against GNU grep and ripgrep:
+**`scripts/benchmark.sh`** -- Comparative benchmarks against GNU grep and ripgrep:
 
 ```bash
 ./scripts/benchmark.sh [SEARCH_DIR]
@@ -964,7 +964,7 @@ done > /tmp/gogrep_bench_data.txt
 
 This creates 500,000 lines of varied content, ensuring that different pattern types (fixed string, regex, case-insensitive) exercise different code paths.
 
-**`/home/dl/dev/gogrep/scripts/profile.sh`** -- Profiling benchmarks against ripgrep:
+**`scripts/profile.sh`** -- Profiling benchmarks against ripgrep:
 
 ```bash
 # All benchmarks + profiling
@@ -1189,16 +1189,16 @@ This is much less than 9.7 GB/s because syscall overhead (~571K syscalls at ~1us
 
 | File | Content |
 |---|---|
-| `/home/dl/dev/gogrep/internal/matcher/boyermoore_test.go` | BoyerMoore benchmarks, bytes.Index baseline, Regex comparison |
-| `/home/dl/dev/gogrep/internal/matcher/ahocorasick_test.go` | Aho-Corasick benchmarks (2, 10 patterns, no match, case-insensitive) |
-| `/home/dl/dev/gogrep/internal/matcher/pcre_test.go` | PCRE benchmarks (simple, lookahead, no match) |
-| `/home/dl/dev/gogrep/internal/simd/simd_test.go` | IndexByte, LastIndexByte, Count benchmarks (SIMD vs stdlib) |
-| `/home/dl/dev/gogrep/internal/simd/index_test.go` | Index, IndexAll, IndexCaseInsensitive benchmarks |
-| `/home/dl/dev/gogrep/internal/simd/index.go` | IndexAll implementation with stack buffer pattern |
-| `/home/dl/dev/gogrep/internal/input/input_test.go` | BufferedReader, MmapReader benchmarks |
-| `/home/dl/dev/gogrep/internal/matcher/match.go` | Matcher interface, pointer-free Match struct |
-| `/home/dl/dev/gogrep/internal/matcher/boyermoore.go` | BoyerMooreMatcher using SIMD-accelerated search |
-| `/home/dl/dev/gogrep/cmd/gogrep/main.go` | CPU/memory profiling flags, signal handling |
-| `/home/dl/dev/gogrep/Makefile` | Build, test, bench targets |
-| `/home/dl/dev/gogrep/scripts/benchmark.sh` | Comparative benchmarks vs grep and rg |
-| `/home/dl/dev/gogrep/scripts/profile.sh` | Profiling + hyperfine benchmarks vs rg |
+| `internal/matcher/boyermoore_test.go` | BoyerMoore benchmarks, bytes.Index baseline, Regex comparison |
+| `internal/matcher/ahocorasick_test.go` | Aho-Corasick benchmarks (2, 10 patterns, no match, case-insensitive) |
+| `internal/matcher/pcre_test.go` | PCRE benchmarks (simple, lookahead, no match) |
+| `internal/simd/simd_test.go` | IndexByte, LastIndexByte, Count benchmarks (SIMD vs stdlib) |
+| `internal/simd/index_test.go` | Index, IndexAll, IndexCaseInsensitive benchmarks |
+| `internal/simd/index.go` | IndexAll implementation with stack buffer pattern |
+| `internal/input/input_test.go` | BufferedReader, MmapReader benchmarks |
+| `internal/matcher/match.go` | Matcher interface, pointer-free Match struct |
+| `internal/matcher/boyermoore.go` | BoyerMooreMatcher using SIMD-accelerated search |
+| `cmd/gogrep/main.go` | CPU/memory profiling flags, signal handling |
+| `Makefile` | Build, test, bench targets |
+| `scripts/benchmark.sh` | Comparative benchmarks vs grep and rg |
+| `scripts/profile.sh` | Profiling + hyperfine benchmarks vs rg |

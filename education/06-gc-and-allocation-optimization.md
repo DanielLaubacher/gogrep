@@ -99,7 +99,7 @@ If each `Match` contained pointer fields, the live pointer count during peak thr
 
 ## Pointer-Free Match Struct
 
-**File**: `/home/dl/dev/gogrep/internal/matcher/match.go`
+**File**: `internal/matcher/match.go`
 
 This is the single most impactful allocation optimization in gogrep. The `Match` struct represents one matched (or context) line, and the design ensures it contains **zero pointer fields**:
 
@@ -319,7 +319,7 @@ The compiler is conservative: if it cannot prove non-escape, the variable goes t
 
 ## The Stack Buffer Escape Trap and Fix
 
-**File**: `/home/dl/dev/gogrep/internal/simd/index.go`
+**File**: `internal/simd/index.go`
 
 This is a specific, subtle escape analysis pitfall that was discovered and fixed in gogrep. It demonstrates how a seemingly harmless coding pattern can cause a heap allocation on every call, even on the path that returns `nil`.
 
@@ -419,7 +419,7 @@ The common case is free. This is crucial for grep because most files in a search
 
 ### This Pattern Is Used in Three Functions
 
-All three functions in `/home/dl/dev/gogrep/internal/simd/index.go` use this identical pattern:
+All three functions in `internal/simd/index.go` use this identical pattern:
 
 1. **`IndexAll`** (lines 18-63): Multi-byte pattern search using `bytes.Index`.
 2. **`indexAllByte`** (lines 66-119): Single-byte search using AVX2 SIMD via `archsimd`.
@@ -437,7 +437,7 @@ Choosing a larger stack buffer (e.g., `[64]int` = 512 bytes) would save one allo
 
 ## sync.Pool for Buffer Reuse
 
-**File**: `/home/dl/dev/gogrep/internal/input/buffered.go`
+**File**: `internal/input/buffered.go`
 
 `sync.Pool` is Go's mechanism for reusing temporary objects across goroutines without explicit lifecycle management. gogrep uses it to recycle file read buffers.
 
@@ -554,7 +554,7 @@ This is why the pool stores buffers with `length=0, capacity=N` semantics: the c
 
 ## Append-Style Formatters (Zero-Alloc Output)
 
-**File**: `/home/dl/dev/gogrep/internal/output/text.go`
+**File**: `internal/output/text.go`
 
 All output formatting in gogrep uses the "append into caller-provided buffer" pattern, achieving zero allocation per formatted result.
 
@@ -592,7 +592,7 @@ func (f *TextFormatter) Format(buf []byte, result Result, multiFile bool) []byte
 The caller passes `buf[:0]` (reset length to zero but retain the backing array). The formatter appends everything into this buffer and returns it. The caller keeps the returned slice for the next call:
 
 ```go
-// From OrderedWriter.writeResult in /home/dl/dev/gogrep/internal/output/writer.go
+// From OrderedWriter.writeResult in internal/output/writer.go
 func (ow *OrderedWriter) writeResult(buf []byte, r Result) []byte {
     // ...
     buf = ow.formatter.Format(buf[:0], r, ow.multiFile)
@@ -625,7 +625,7 @@ The `strconv` package provides `Append*` variants for all types:
 
 **ANSI color codes as `[]byte` constants**
 
-**File**: `/home/dl/dev/gogrep/internal/output/color.go`
+**File**: `internal/output/color.go`
 
 ```go
 var (
@@ -667,7 +667,7 @@ Over the course of searching 100K files, the buffer is allocated once and grown 
 
 ## unsafe.String for Zero-Copy String Construction
 
-**File**: `/home/dl/dev/gogrep/internal/walker/walker.go`
+**File**: `internal/walker/walker.go`
 
 The `joinPath` function constructs file paths (e.g., `"/home/user/project" + "/" + "main.go"`) without the double allocation that `string(buf)` would cause:
 
@@ -735,7 +735,7 @@ Several components allocate buffers once per goroutine and reuse them across all
 
 ### Walker Workers
 
-**File**: `/home/dl/dev/gogrep/internal/walker/walker.go` (lines 173-184)
+**File**: `internal/walker/walker.go` (lines 173-184)
 
 ```go
 func (pw *parallelWalker) worker() {
@@ -766,7 +766,7 @@ This is the "pass-and-return" reuse pattern: the function receives the slice, ma
 
 ### OrderedWriter Buffer
 
-**File**: `/home/dl/dev/gogrep/internal/output/writer.go` (lines 56-85)
+**File**: `internal/output/writer.go` (lines 56-85)
 
 ```go
 func (ow *OrderedWriter) WriteOrdered(results <-chan Result, onMatch func()) {
@@ -799,7 +799,7 @@ A single `[]byte` buffer is used across all result formatting. `writeResult` cal
 
 ### runFiles Buffer
 
-**File**: `/home/dl/dev/gogrep/internal/cli/run.go` (lines 143-168)
+**File**: `internal/cli/run.go` (lines 143-168)
 
 ```go
 func runFiles(paths []string, m matcher.Matcher, reader input.Reader,
@@ -825,7 +825,7 @@ Same pattern: declare once, pass with `[:0]` to reset, keep the returned (grown)
 
 ## Deferred Buffer Release
 
-**Files**: `/home/dl/dev/gogrep/internal/cli/run.go` (lines 268-315), `/home/dl/dev/gogrep/internal/scheduler/scheduler.go` (lines 66-110)
+**Files**: `internal/cli/run.go` (lines 268-315), `internal/scheduler/scheduler.go` (lines 66-110)
 
 Non-matching files release their read buffer **immediately** after the match check. Only matching files keep the buffer alive until formatting is complete.
 
@@ -892,7 +892,7 @@ With deferred release, memory usage is proportional to the **number of in-flight
 
 ### The Same Pattern in the Scheduler
 
-`/home/dl/dev/gogrep/internal/scheduler/scheduler.go` uses identical logic in `processFile`:
+`internal/scheduler/scheduler.go` uses identical logic in `processFile`:
 
 ```go
 func (s *Scheduler) processFile(entry walker.FileEntry) output.Result {
@@ -939,7 +939,7 @@ Worker reads file C (match found):
 
 ## The noopCloser Pattern
 
-**File**: `/home/dl/dev/gogrep/internal/input/reader.go`
+**File**: `internal/input/reader.go`
 
 ```go
 // noopCloser is a package-level no-op closer to avoid allocating a func literal per file.
@@ -972,8 +972,8 @@ This creates a new function value on each call. In Go, a function literal that c
 This is a micro-optimization, but it illustrates a general principle: **avoid allocations in common cases, even small ones**. In a search of 100K files, many will be empty (e.g., `__init__.py` files, empty `.gitkeep` files). If each empty file allocated a closure, that's thousands of tiny allocations the GC must track. The `noopCloser` pattern eliminates them entirely.
 
 The same principle appears throughout gogrep:
-- `separatorLine` is a package-level `[]byte("--")` in `/home/dl/dev/gogrep/internal/output/text.go` rather than allocated per separator.
-- ANSI color codes are package-level `[]byte` variables in `/home/dl/dev/gogrep/internal/output/color.go` rather than per-format-call allocations.
+- `separatorLine` is a package-level `[]byte("--")` in `internal/output/text.go` rather than allocated per separator.
+- ANSI color codes are package-level `[]byte` variables in `internal/output/color.go` rather than per-format-call allocations.
 - `Match` stores integer offsets rather than `[]byte` slices to avoid per-match pointer fields.
 
 Every eliminated allocation compounds: fewer heap objects means fewer GC roots, fewer pointer scans, less mark work, lower GC frequency, and ultimately lower latency and higher throughput.

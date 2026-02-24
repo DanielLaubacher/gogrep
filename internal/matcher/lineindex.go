@@ -87,19 +87,20 @@ func matchSetFromOffsets(data []byte, offsets []int, patternLen int, maxCols int
 	return MatchSet{Data: data, Matches: matches, Positions: positions}
 }
 
-// matchSetFromLocs converts variable-length match locations to a MatchSet.
-func matchSetFromLocs(data []byte, locs [][]int, maxCols int, needLineNums bool) MatchSet {
+// matchSetFromLocs converts match locations (as [2]int{start, end}) to a MatchSet.
+// It reuses the locs slice in-place for positions (converting buffer-absolute offsets
+// to snippet-relative offsets), eliminating one allocation.
+func matchSetFromLocs(data []byte, locs [][2]int, maxCols int, needLineNums bool) MatchSet {
 	if len(locs) == 0 {
 		return MatchSet{}
 	}
 
 	matches := make([]Match, 0, len(locs))
-	positions := make([][2]int, 0, len(locs))
 	lastSnippetStart := -1
 	lineNum := 1
 	prevOff := 0
 
-	for _, loc := range locs {
+	for i, loc := range locs {
 		matchStart, matchEnd := loc[0], loc[1]
 
 		snippetStart, snippetLen, posInSnippet := snippetFromOffset(data, matchStart, maxCols)
@@ -114,26 +115,27 @@ func matchSetFromLocs(data []byte, locs [][]int, maxCols int, needLineNums bool)
 			posEnd = snippetLen
 		}
 
-		posIdx := len(positions)
-		positions = append(positions, [2]int{posInSnippet, posEnd})
+		// Overwrite locs[i] in-place with snippet-relative position.
+		// Safe because we already read loc above and iteration is forward-only.
+		locs[i] = [2]int{posInSnippet, posEnd}
 
 		if snippetStart == lastSnippetStart {
 			last := &matches[len(matches)-1]
-			last.PosCount = posIdx - last.PosIdx + 1
+			last.PosCount = i - last.PosIdx + 1
 		} else {
 			matches = append(matches, Match{
 				LineNum:    lineNum,
 				LineStart:  snippetStart,
 				LineLen:    snippetLen,
 				ByteOffset: int64(snippetStart),
-				PosIdx:     posIdx,
+				PosIdx:     i,
 				PosCount:   1,
 			})
 			lastSnippetStart = snippetStart
 		}
 	}
 
-	return MatchSet{Data: data, Matches: matches, Positions: positions}
+	return MatchSet{Data: data, Matches: matches, Positions: locs}
 }
 
 // countUniqueLines counts how many distinct lines contain at least one offset.
@@ -181,8 +183,21 @@ func countInvert(data []byte, matchFunc func(line []byte) bool) int {
 	return count
 }
 
+// toLocs2 converts [][]int (as returned by regexp.FindAllIndex / pcre.FindAllIndex)
+// to [][2]int value type, eliminating per-element heap allocations.
+func toLocs2(locs [][]int) [][2]int {
+	if len(locs) == 0 {
+		return nil
+	}
+	result := make([][2]int, len(locs))
+	for i, loc := range locs {
+		result[i] = [2]int{loc[0], loc[1]}
+	}
+	return result
+}
+
 // countLocsUniqueLines counts how many distinct lines contain at least one loc.
-func countLocsUniqueLines(data []byte, locs [][]int) int {
+func countLocsUniqueLines(data []byte, locs [][2]int) int {
 	if len(locs) == 0 {
 		return 0
 	}

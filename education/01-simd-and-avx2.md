@@ -272,7 +272,7 @@ Line 107: return at end of Count
 Line 141: return at end of ToLowerASCII
 ```
 
-File: `/home/dl/dev/gogrep/internal/simd/simd.go`
+File: `internal/simd/simd.go`
 
 And in `internal/simd/index.go`:
 
@@ -284,7 +284,7 @@ Line 180: return at end of IndexCaseInsensitive (no match)
 Line 260: return at end of IndexAllCaseInsensitive
 ```
 
-File: `/home/dl/dev/gogrep/internal/simd/index.go`
+File: `internal/simd/index.go`
 
 The pattern is: **if any `archsimd` function was called before this return statement, `ClearAVXUpperBits()` must precede it.** Missing even one call site can cause intermittent performance degradation that is very difficult to diagnose, because it depends on what SSE instructions the caller (or Go runtime) happens to execute next.
 
@@ -294,7 +294,7 @@ The pattern is: **if any `archsimd` function was called before this return state
 
 The simplest SIMD search: find the first occurrence of a single byte in a buffer.
 
-File: `/home/dl/dev/gogrep/internal/simd/simd.go`, lines 13-43
+File: `internal/simd/simd.go`, lines 13-43
 
 ```go
 // IndexByte returns the index of the first occurrence of c in data, or -1 if not present.
@@ -427,7 +427,7 @@ An alternative technique (not used here) is to do a final overlapping read: load
 
 The same principle as `IndexByte`, but scanning from the end of the buffer toward the start. This finds the **last** occurrence of a byte.
 
-File: `/home/dl/dev/gogrep/internal/simd/simd.go`, lines 47-78
+File: `internal/simd/simd.go`, lines 47-78
 
 ```go
 // LastIndexByte returns the index of the last occurrence of c in data, or -1 if not present.
@@ -497,7 +497,7 @@ Notice that the scalar tail is at the **beginning** of the function (checking th
 
 Counting occurrences of a byte in a buffer is a variation of searching where we do not stop at the first match -- instead, we accumulate the total number of matches across all chunks.
 
-File: `/home/dl/dev/gogrep/internal/simd/simd.go`, lines 82-109
+File: `internal/simd/simd.go`, lines 82-109
 
 ```go
 // Count returns the number of occurrences of c in data.
@@ -554,7 +554,7 @@ The `Count` function is used to count newline characters (`'\n'`) in data buffer
 
 Converting ASCII uppercase letters to lowercase is a common need for case-insensitive search. The SIMD approach converts 32 bytes simultaneously without branching.
 
-File: `/home/dl/dev/gogrep/internal/simd/simd.go`, lines 113-142
+File: `internal/simd/simd.go`, lines 113-142
 
 ```go
 // ToLowerASCII lowercases ASCII bytes from src into dst using AVX2.
@@ -676,7 +676,7 @@ This approach is entirely branchless within the SIMD loop. There are no conditio
 
 This is the most important SIMD technique in gogrep and the primary source of SIMD-derived performance advantage. It accelerates **multi-byte pattern search** (especially case-insensitive) by using a two-point prefilter inspired by the Horspool string search algorithm.
 
-File: `/home/dl/dev/gogrep/internal/simd/index.go`, lines 123-182
+File: `internal/simd/index.go`, lines 123-182
 
 ### The Core Insight
 
@@ -820,7 +820,7 @@ func matchCaseInsensitive(data, patternLower []byte) bool {
 }
 ```
 
-File: `/home/dl/dev/gogrep/internal/simd/index.go`, lines 272-279
+File: `internal/simd/index.go`, lines 272-279
 
 The full verification is scalar (byte-by-byte), but it is called so rarely that its cost is amortized to nearly zero. The SIMD prefilter eliminates >99.99% of positions.
 
@@ -892,11 +892,11 @@ This technique is attributed to Brian Kernighan (of K&R C fame) for counting set
 ### Where It Appears in gogrep
 
 - `IndexCaseInsensitive`: iterates over candidate positions from the first+last byte prefilter
-  (`/home/dl/dev/gogrep/internal/simd/index.go`, line 160-167)
+  (`internal/simd/index.go`, line 160-167)
 - `IndexAllCaseInsensitive`: same, with additional skip logic for non-overlapping matches
-  (`/home/dl/dev/gogrep/internal/simd/index.go`, lines 215-239)
+  (`internal/simd/index.go`, lines 215-239)
 - `indexAllByte`: iterates over all matching byte positions in a chunk
-  (`/home/dl/dev/gogrep/internal/simd/index.go`, lines 77-89)
+  (`internal/simd/index.go`, lines 77-89)
 
 ---
 
@@ -904,7 +904,7 @@ This technique is attributed to Brian Kernighan (of K&R C fame) for counting set
 
 When collecting **all** matches (not just the first), we need to handle non-overlapping semantics: after finding a match at position `j`, the next match cannot start until position `j + patternLen`.
 
-File: `/home/dl/dev/gogrep/internal/simd/index.go`, lines 185-270
+File: `internal/simd/index.go`, lines 185-270
 
 ### The Problem
 
@@ -990,7 +990,7 @@ These implementations use `PCMPESTRI` (SSE4.2), `VPCMPEQB` (AVX2), and other SIM
 
 For case-sensitive multi-byte search, gogrep delegates directly to `bytes.Index`:
 
-File: `/home/dl/dev/gogrep/internal/simd/index.go`, lines 12-14
+File: `internal/simd/index.go`, lines 12-14
 
 ```go
 // Index returns the index of the first occurrence of pattern in data, or -1 if not present.
@@ -1002,7 +1002,7 @@ func Index(data, pattern []byte) int {
 
 For case-sensitive `IndexAll` (finding all occurrences), gogrep loops over `bytes.Index`:
 
-File: `/home/dl/dev/gogrep/internal/simd/index.go`, lines 18-63
+File: `internal/simd/index.go`, lines 18-63
 
 ```go
 func IndexAll(data, pattern []byte) []int {
@@ -1072,7 +1072,7 @@ The SIMD functions in `internal/simd/` are low-level building blocks. The matche
 
 ### Matcher Selection
 
-File: `/home/dl/dev/gogrep/internal/matcher/factory.go`
+File: `internal/matcher/factory.go`
 
 ```
 Pattern type          -> Matcher              -> SIMD function used
@@ -1087,7 +1087,7 @@ The `BoyerMooreMatcher` is the primary consumer of SIMD acceleration.
 
 ### BoyerMooreMatcher: Search-then-Split
 
-File: `/home/dl/dev/gogrep/internal/matcher/boyermoore.go`
+File: `internal/matcher/boyermoore.go`
 
 The BoyerMooreMatcher uses a "search-then-split" strategy:
 
@@ -1115,11 +1115,11 @@ This is more efficient than the alternative "split-then-search" approach (splitt
 - Line-splitting overhead is only incurred for lines that actually contain matches.
 - For typical grep workloads (sparse matches), the vast majority of lines are skipped entirely.
 
-The `matchSetFromOffsets` function in `/home/dl/dev/gogrep/internal/matcher/lineindex.go` converts raw byte offsets into structured `Match` objects with line numbers and highlight positions.
+The `matchSetFromOffsets` function in `internal/matcher/lineindex.go` converts raw byte offsets into structured `Match` objects with line numbers and highlight positions.
 
 ### Contrast: FixedMatcher (No SIMD)
 
-File: `/home/dl/dev/gogrep/internal/matcher/fixed.go`
+File: `internal/matcher/fixed.go`
 
 The `FixedMatcher` uses the split-then-search approach with `bytes.Index`. For case-insensitive mode, it calls `bytes.ToLower(line)` on every line, allocating a new lowercased copy. This allocation is the primary cost that the SIMD path avoids.
 
@@ -1129,7 +1129,7 @@ The `FixedMatcher` uses the split-then-search approach with `bytes.Index`. For c
 
 The `IndexAll` and `IndexAllCaseInsensitive` functions use a technique to avoid heap allocation in the common case of few or zero matches.
 
-File: `/home/dl/dev/gogrep/internal/simd/index.go`
+File: `internal/simd/index.go`
 
 ```go
 var stackBuf [16]int
@@ -1272,12 +1272,12 @@ All source files referenced in this document:
 
 | File | Description |
 |------|-------------|
-| `/home/dl/dev/gogrep/internal/simd/simd.go` | IndexByte, LastIndexByte, Count, ToLowerASCII |
-| `/home/dl/dev/gogrep/internal/simd/index.go` | Index, IndexAll, IndexCaseInsensitive, IndexAllCaseInsensitive, indexAllByte |
-| `/home/dl/dev/gogrep/internal/simd/simd_test.go` | Benchmarks for single-byte operations |
-| `/home/dl/dev/gogrep/internal/simd/index_test.go` | Benchmarks for multi-byte and case-insensitive operations |
-| `/home/dl/dev/gogrep/internal/matcher/match.go` | Matcher interface, Match/MatchSet types |
-| `/home/dl/dev/gogrep/internal/matcher/boyermoore.go` | BoyerMooreMatcher (primary SIMD consumer) |
-| `/home/dl/dev/gogrep/internal/matcher/fixed.go` | FixedMatcher (non-SIMD baseline for comparison) |
-| `/home/dl/dev/gogrep/internal/matcher/lineindex.go` | matchSetFromOffsets (search-then-split line extraction) |
-| `/home/dl/dev/gogrep/internal/matcher/factory.go` | Matcher selection logic |
+| `internal/simd/simd.go` | IndexByte, LastIndexByte, Count, ToLowerASCII |
+| `internal/simd/index.go` | Index, IndexAll, IndexCaseInsensitive, IndexAllCaseInsensitive, indexAllByte |
+| `internal/simd/simd_test.go` | Benchmarks for single-byte operations |
+| `internal/simd/index_test.go` | Benchmarks for multi-byte and case-insensitive operations |
+| `internal/matcher/match.go` | Matcher interface, Match/MatchSet types |
+| `internal/matcher/boyermoore.go` | BoyerMooreMatcher (primary SIMD consumer) |
+| `internal/matcher/fixed.go` | FixedMatcher (non-SIMD baseline for comparison) |
+| `internal/matcher/lineindex.go` | matchSetFromOffsets (search-then-split line extraction) |
+| `internal/matcher/factory.go` | Matcher selection logic |

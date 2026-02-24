@@ -84,7 +84,7 @@ A **minor page fault** occurs when the data is already in the page cache (anothe
 
 ### 1.3 The mmap Lifecycle in gogrep
 
-The implementation lives in `/home/dl/dev/gogrep/internal/input/mmap.go`. Here is the complete `readMmap` function with every step explained.
+The implementation lives in `internal/input/mmap.go`. Here is the complete `readMmap` function with every step explained.
 
 **Step 1 --- Advise the kernel about access pattern BEFORE mapping:**
 
@@ -194,7 +194,7 @@ For a 100MB log file where the pattern appears on line 3, `MAP_POPULATE` would r
 
 ### 2.1 The Decision Logic
 
-The `AdaptiveReader` (`/home/dl/dev/gogrep/internal/input/mmap.go`, line 70-103) makes a single per-file decision: mmap or buffered read. The full implementation:
+The `AdaptiveReader` (`internal/input/mmap.go`, line 70-103) makes a single per-file decision: mmap or buffered read. The full implementation:
 
 ```go
 func NewAdaptiveReader(mmapThreshold int64) Reader {
@@ -254,7 +254,7 @@ A naive implementation might call `unix.Stat(path)` first to get the size, then 
 
 ### 2.3 The 8MB Threshold
 
-The `MmapThreshold` field in `Config` (`/home/dl/dev/gogrep/internal/cli/config.go`) defaults to 8MB (8,388,608 bytes). This was determined empirically by benchmarking both strategies across a range of file sizes.
+The `MmapThreshold` field in `Config` (`internal/cli/config.go`) defaults to 8MB (8,388,608 bytes). This was determined empirically by benchmarking both strategies across a range of file sizes.
 
 At 8MB, the mmap overhead (the mmap/munmap syscall pair, page table setup, and page faults) is amortized over enough data that the zero-copy advantage dominates. Below 8MB, the buffered reader's single `pread` (or small number of pread calls) plus a memory copy is cheaper than the page fault overhead.
 
@@ -265,7 +265,7 @@ The threshold is configurable so users can tune it for their workload. For examp
 
 ### 2.4 O_NOATIME and the Atomic Fallback
 
-Every file open in gogrep uses `O_NOATIME` (`/home/dl/dev/gogrep/internal/input/mmap.go`, line 111-124):
+Every file open in gogrep uses `O_NOATIME` (`internal/input/mmap.go`, line 111-124):
 
 ```go
 var noatimeWorks atomic.Int32
@@ -299,7 +299,7 @@ If neither condition holds, `open()` with `O_NOATIME` returns `EPERM`. gogrep ha
 
 The `atomic.Int32` ensures this is safe under concurrent access from multiple worker goroutines. The `Store(0)` on `EPERM` is idempotent --- multiple goroutines might race to store 0, but the result is the same.
 
-Note: the walker (`/home/dl/dev/gogrep/internal/walker/walker.go`, line 14-33) has its own identical `noatimeWorks` atomic and `openDir` function for directory opens. These are separate atomics because directory opens and file opens may have different permission contexts (though in practice they usually match).
+Note: the walker (`internal/walker/walker.go`, line 14-33) has its own identical `noatimeWorks` atomic and `openDir` function for directory opens. These are separate atomics because directory opens and file opens may have different permission contexts (though in practice they usually match).
 
 ---
 
@@ -307,7 +307,7 @@ Note: the walker (`/home/dl/dev/gogrep/internal/walker/walker.go`, line 14-33) h
 
 ### 3.1 The Pool Design
 
-For files below the mmap threshold, gogrep uses pooled buffers to avoid per-file heap allocations (`/home/dl/dev/gogrep/internal/input/buffered.go`):
+For files below the mmap threshold, gogrep uses pooled buffers to avoid per-file heap allocations (`internal/input/buffered.go`):
 
 ```go
 var bufPool = sync.Pool{
@@ -460,7 +460,7 @@ result.Closer()
 
 The critical invariant: **the buffer (`ReadResult.Data`) must remain valid until `Closer()` is called, and `Closer()` must not be called until all formatting is complete.**
 
-Here is how this works concretely. The `Match` struct (`/home/dl/dev/gogrep/internal/matcher/match.go`) stores offsets, not copies:
+Here is how this works concretely. The `Match` struct (`internal/matcher/match.go`) stores offsets, not copies:
 
 ```go
 type Match struct {
@@ -474,7 +474,7 @@ type Match struct {
 }
 ```
 
-`LineStart` and `LineLen` are indices into `MatchSet.Data`, which is the same `[]byte` returned by the reader. When the `TextFormatter` formats a match (`/home/dl/dev/gogrep/internal/output/text.go`, line 66-68):
+`LineStart` and `LineLen` are indices into `MatchSet.Data`, which is the same `[]byte` returned by the reader. When the `TextFormatter` formats a match (`internal/output/text.go`, line 66-68):
 
 ```go
 lineBytes = ms.Data[m.LineStart : m.LineStart+m.LineLen]
@@ -486,7 +486,7 @@ This creates a sub-slice of the original data --- no copy, just a new slice head
 
 ### 4.2 Deferred Release Optimization
 
-The `searchReader` function (`/home/dl/dev/gogrep/internal/cli/run.go`, line 268-315) implements the key optimization: release non-matching files' buffers immediately, but keep matching files' buffers alive:
+The `searchReader` function (`internal/cli/run.go`, line 268-315) implements the key optimization: release non-matching files' buffers immediately, but keep matching files' buffers alive:
 
 ```go
 func searchReader(r input.Reader, path string, m matcher.Matcher, mode searchMode) output.Result {
@@ -554,7 +554,7 @@ This keeps memory usage proportional to the number of matching files being activ
 
 ### 4.3 Lifecycle in the Scheduler (Recursive Mode)
 
-The scheduler (`/home/dl/dev/gogrep/internal/scheduler/scheduler.go`) implements the same deferred-release pattern in its `processFile` method:
+The scheduler (`internal/scheduler/scheduler.go`) implements the same deferred-release pattern in its `processFile` method:
 
 ```go
 func (s *Scheduler) processFile(entry walker.FileEntry) output.Result {
@@ -613,7 +613,7 @@ This is the goroutine boundary crossing. The buffer was allocated/mapped by the 
 
 ### 4.4 Lifecycle in the OrderedWriter
 
-The `OrderedWriter` (`/home/dl/dev/gogrep/internal/output/writer.go`, line 36-100) consumes results and writes them in sequence order:
+The `OrderedWriter` (`internal/output/writer.go`, line 36-100) consumes results and writes them in sequence order:
 
 ```go
 func (ow *OrderedWriter) writeResult(buf []byte, r Result) []byte {
@@ -666,7 +666,7 @@ A result in the `pending` map keeps its buffer alive (via its Closer). This mean
 
 ### 4.5 Lifecycle in Non-Recursive Mode
 
-In `runFiles` (`/home/dl/dev/gogrep/internal/cli/run.go`, line 143-168), files are processed sequentially in a single goroutine:
+In `runFiles` (`internal/cli/run.go`, line 143-168), files are processed sequentially in a single goroutine:
 
 ```go
 for _, path := range paths {
@@ -708,7 +708,7 @@ Buffer lifecycle bugs are among the most insidious bugs in gogrep because they m
 
 ### 5.1 Layer 1: Extension-Based Filtering
 
-Before a binary file is ever opened, the walker checks its extension (`/home/dl/dev/gogrep/internal/walker/filter.go`, line 22-44):
+Before a binary file is ever opened, the walker checks its extension (`internal/walker/filter.go`, line 22-44):
 
 ```go
 func IsBinaryExtension(name string) bool {
@@ -753,7 +753,7 @@ The function uses `strings.LastIndexByte` to find the last dot, extracting the f
    - Databases: `.db`, `.sqlite`, `.mdb`
    - Misc: `.swp`, `.swo` (vim swap files), `.DS_Store`
 
-This check happens during directory traversal in `processDir` (`/home/dl/dev/gogrep/internal/walker/walker.go`, line 237):
+This check happens during directory traversal in `processDir` (`internal/walker/walker.go`, line 237):
 
 ```go
 case DT_REG:
@@ -769,7 +769,7 @@ When a file is skipped by extension, no `open`, `fstat`, `pread`, or `close` sys
 
 ### 5.2 Layer 2: Content-Based Detection
 
-Extension filtering catches known binary formats, but some files have misleading extensions (a `.txt` file that is actually binary, or a file with no extension that is binary). After reading the file's contents, the scheduler checks for NUL bytes (`/home/dl/dev/gogrep/internal/walker/filter.go`, line 10-16):
+Extension filtering catches known binary formats, but some files have misleading extensions (a `.txt` file that is actually binary, or a file with no extension that is binary). After reading the file's contents, the scheduler checks for NUL bytes (`internal/walker/filter.go`, line 10-16):
 
 ```go
 func IsBinary(data []byte) bool {
@@ -839,7 +839,7 @@ By putting the cheap check first, gogrep avoids the expensive check for the vast
 
 ### 6.1 ReadResult and the Closer Contract
 
-The reader interface and its return type (`/home/dl/dev/gogrep/internal/input/reader.go`):
+The reader interface and its return type (`internal/input/reader.go`):
 
 ```go
 type ReadResult struct {
@@ -884,7 +884,7 @@ For a search across 37,000 files where perhaps 100 are empty, this saves 100 hea
 
 ### 6.3 StdinReader: The Special Case
 
-The stdin reader (`/home/dl/dev/gogrep/internal/input/stdin.go`) uses a completely different strategy:
+The stdin reader (`internal/input/stdin.go`) uses a completely different strategy:
 
 ```go
 func (r *StdinReader) Read(_ string) (ReadResult, error) {
@@ -919,7 +919,7 @@ mmap'd regions are *outside* the Go heap. The `syscall.Mmap` call returns a `[]b
 
 ### 7.2 Pointer-Free Match Structs
 
-The `Match` struct (`/home/dl/dev/gogrep/internal/matcher/match.go`) is deliberately designed to be pointer-free:
+The `Match` struct (`internal/matcher/match.go`) is deliberately designed to be pointer-free:
 
 ```go
 type Match struct {
@@ -972,17 +972,17 @@ The steady-state pool population is approximately `NumCPU` buffers (one per P sh
 
 | File | Purpose |
 |------|---------|
-| `/home/dl/dev/gogrep/internal/input/reader.go` | `Reader` interface, `ReadResult` struct, `noopCloser` |
-| `/home/dl/dev/gogrep/internal/input/mmap.go` | `MmapReader`, `adaptiveReader`, `readMmap`, `openFile` |
-| `/home/dl/dev/gogrep/internal/input/buffered.go` | `BufferedReader`, `readBuffered`, `bufPool` |
-| `/home/dl/dev/gogrep/internal/input/stdin.go` | `StdinReader` |
-| `/home/dl/dev/gogrep/internal/matcher/match.go` | `Match`, `MatchSet`, `Matcher` interface |
-| `/home/dl/dev/gogrep/internal/output/result.go` | `output.Result` with `Closer` field |
-| `/home/dl/dev/gogrep/internal/output/formatter.go` | `Formatter` interface |
-| `/home/dl/dev/gogrep/internal/output/writer.go` | `Writer`, `OrderedWriter`, `writeResult` |
-| `/home/dl/dev/gogrep/internal/output/text.go` | `TextFormatter.formatMatch` (reads from MatchSet.Data) |
-| `/home/dl/dev/gogrep/internal/scheduler/scheduler.go` | `Scheduler.processFile` (buffer lifecycle in workers) |
-| `/home/dl/dev/gogrep/internal/cli/run.go` | `searchReader`, `runRecursive`, `runFiles` |
-| `/home/dl/dev/gogrep/internal/cli/config.go` | `Config.MmapThreshold` |
-| `/home/dl/dev/gogrep/internal/walker/walker.go` | `processDir` (extension-based binary filtering) |
-| `/home/dl/dev/gogrep/internal/walker/filter.go` | `IsBinary`, `IsBinaryExtension`, `binaryExts` |
+| `internal/input/reader.go` | `Reader` interface, `ReadResult` struct, `noopCloser` |
+| `internal/input/mmap.go` | `MmapReader`, `adaptiveReader`, `readMmap`, `openFile` |
+| `internal/input/buffered.go` | `BufferedReader`, `readBuffered`, `bufPool` |
+| `internal/input/stdin.go` | `StdinReader` |
+| `internal/matcher/match.go` | `Match`, `MatchSet`, `Matcher` interface |
+| `internal/output/result.go` | `output.Result` with `Closer` field |
+| `internal/output/formatter.go` | `Formatter` interface |
+| `internal/output/writer.go` | `Writer`, `OrderedWriter`, `writeResult` |
+| `internal/output/text.go` | `TextFormatter.formatMatch` (reads from MatchSet.Data) |
+| `internal/scheduler/scheduler.go` | `Scheduler.processFile` (buffer lifecycle in workers) |
+| `internal/cli/run.go` | `searchReader`, `runRecursive`, `runFiles` |
+| `internal/cli/config.go` | `Config.MmapThreshold` |
+| `internal/walker/walker.go` | `processDir` (extension-based binary filtering) |
+| `internal/walker/filter.go` | `IsBinary`, `IsBinaryExtension`, `binaryExts` |

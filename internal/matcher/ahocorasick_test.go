@@ -157,13 +157,13 @@ func TestAhoCorasickMatcher_FailureLinks(t *testing.T) {
 	}
 }
 
-func TestAhoCorasickMatcher_SearchLine(t *testing.T) {
+func TestAhoCorasickMatcher_SearchLocs(t *testing.T) {
 	m := NewAhoCorasickMatcher([]string{"he", "she", "his", "hers"}, false, false)
-	acMatches := m.searchLine([]byte("ahishers"))
+	locs := m.searchLocs([]byte("ahishers"))
 
-	// Expected matches: "his" at 1, "she" at 3, "he" at 4, "hers" at 4
-	if len(acMatches) < 3 {
-		t.Errorf("got %d acMatches, want at least 3: %v", len(acMatches), acMatches)
+	// Expected matches: "his" at [1,4], "she" at [3,6], "he" at [4,6], "hers" at [4,8]
+	if len(locs) < 3 {
+		t.Errorf("got %d locs, want at least 3: %v", len(locs), locs)
 	}
 }
 

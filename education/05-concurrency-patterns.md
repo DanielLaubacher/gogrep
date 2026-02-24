@@ -45,7 +45,7 @@ This is a classic producer-consumer pipeline, but with some non-obvious properti
 
 The orchestration happens in a single function:
 
-**File: `/home/dl/dev/gogrep/internal/cli/run.go`, lines 170-201**
+**File: `internal/cli/run.go`, lines 170-201**
 
 ```go
 func runRecursive(paths []string, m matcher.Matcher, reader input.Reader,
@@ -119,7 +119,7 @@ On a 16-core machine, that is 50 goroutines. This is modest. Go's scheduler hand
 
 ## 2. Stage 1: Parallel BFS Directory Walker
 
-**File: `/home/dl/dev/gogrep/internal/walker/walker.go`**
+**File: `internal/walker/walker.go`**
 
 The walker is the most complex concurrent component. It implements a parallel breadth-first search of the directory tree using raw Linux `getdents64` syscalls.
 
@@ -302,7 +302,7 @@ Each worker allocates its own `buf` and `dirents` once at startup. These are reu
 
 The `dirents` slice is passed to `processDir` and returned (possibly grown). `ParseDirents` reuses the slice by resetting it to `dst[:0]`, which keeps the backing array:
 
-**File: `/home/dl/dev/gogrep/internal/walker/dirent.go`, lines 36-37**
+**File: `internal/walker/dirent.go`, lines 36-37**
 ```go
 func ParseDirents(buf []byte, n int, dst []Dirent) []Dirent {
     entries := dst[:0]  // Reuse backing array
@@ -359,7 +359,7 @@ FileEntry deliberately carries only the file path, not a file descriptor or size
 
 ### 2.8 Launching the Walker
 
-**File: `/home/dl/dev/gogrep/internal/walker/walker.go`, lines 54-110**
+**File: `internal/walker/walker.go`, lines 54-110**
 
 ```go
 func Walk(roots []string, opts WalkOptions) (<-chan FileEntry, <-chan error) {
@@ -430,7 +430,7 @@ The root directories are enqueued before any workers start. This is safe because
 
 ## 3. Stage 2: Worker Pool Scheduler
 
-**File: `/home/dl/dev/gogrep/internal/scheduler/scheduler.go`**
+**File: `internal/scheduler/scheduler.go`**
 
 The scheduler is deliberately simple. Its job is to take files from the walker and produce search results. The complexity of work distribution is handled entirely by Go's channel semantics.
 
@@ -619,7 +619,7 @@ The WaitGroup goroutine is a standard Go pattern. It cannot be done inline becau
 
 ## 4. Stage 3: Ordered Output Resequencing
 
-**File: `/home/dl/dev/gogrep/internal/output/writer.go`**
+**File: `internal/output/writer.go`**
 
 Results arrive from the scheduler in arbitrary order. If Worker 3 finishes before Worker 1, its result arrives first on `resultCh`. The OrderedWriter resequences results to match the file discovery order.
 
@@ -756,7 +756,7 @@ The `onMatch` callback is invoked every time a result with matches is received. 
 
 ### 4.6 The Writer: writev Syscall
 
-**File: `/home/dl/dev/gogrep/internal/output/writer.go`, lines 1-34**
+**File: `internal/output/writer.go`, lines 1-34**
 
 ```go
 type Writer struct {
@@ -846,7 +846,7 @@ This is an elegant property of Go channels. No explicit flow control code is nee
 
 ## 6. The Atomic O_NOATIME Pattern
 
-**Files: `/home/dl/dev/gogrep/internal/walker/walker.go` (lines 16-33), `/home/dl/dev/gogrep/internal/input/mmap.go` (lines 107-124)**
+**Files: `internal/walker/walker.go` (lines 16-33), `internal/input/mmap.go` (lines 107-124)**
 
 Both the walker and the input reader use O_NOATIME when opening files/directories to avoid updating the access time inode field, which would cause unnecessary disk writes. However, O_NOATIME requires file ownership or CAP_FOWNER capability, so it might fail with EPERM.
 
@@ -907,7 +907,7 @@ When a scheduler worker calls `s.reader.Read(entry.Path)`, the `adaptiveReader` 
 - **Buffers the file** (for small files): Obtains a buffer from `sync.Pool`, reads the file into it via `pread`. The `Closer` returns the buffer to the pool.
 - **Memory-maps the file** (for large files): Uses `mmap` to create a virtual memory mapping. The `Closer` calls `munmap` and closes the fd.
 
-**File: `/home/dl/dev/gogrep/internal/input/mmap.go`, lines 80-103**
+**File: `internal/input/mmap.go`, lines 80-103**
 
 ```go
 func (r *adaptiveReader) Read(path string) (ReadResult, error) {
@@ -975,7 +975,7 @@ In `-l` mode, only the file path is printed (no line content). The `MatchSet` co
 
 ## 8. sync.Pool for Read Buffers
 
-**File: `/home/dl/dev/gogrep/internal/input/buffered.go`**
+**File: `internal/input/buffered.go`**
 
 The buffered reader uses `sync.Pool` to reuse read buffers across files, reducing GC pressure.
 
@@ -1040,7 +1040,7 @@ One alternative would be to give each worker its own dedicated buffer (like the 
 
 ## 9. Config as Value: Eliminating Shared Mutable State
 
-**File: `/home/dl/dev/gogrep/internal/cli/config.go`**
+**File: `internal/cli/config.go`**
 
 ```go
 type Config struct {
@@ -1111,7 +1111,7 @@ This is dependency injection at the value level. Each component declares exactly
 
 ## 10. The Four Execution Modes
 
-**File: `/home/dl/dev/gogrep/internal/cli/run.go`**
+**File: `internal/cli/run.go`**
 
 gogrep supports four execution modes, each with different concurrency characteristics:
 
@@ -1203,7 +1203,7 @@ Event-driven, single-goroutine processing. The watch mode uses inotify + epoll (
 
 ## 11. Pointer-Free Match Structs and GC Pressure
 
-**File: `/home/dl/dev/gogrep/internal/matcher/match.go`**
+**File: `internal/matcher/match.go`**
 
 The `Match` and `MatchSet` types are designed to minimize GC scanning overhead in the concurrent pipeline.
 

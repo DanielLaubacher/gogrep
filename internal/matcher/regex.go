@@ -39,8 +39,7 @@ func (m *RegexMatcher) CountAll(data []byte) int {
 		})
 	}
 
-	locs := m.re.FindAllIndex(data, -1)
-	return countLocsUniqueLines(data, locs)
+	return countLocsUniqueLines(data, toLocs2(m.re.FindAllIndex(data, -1)))
 }
 
 func (m *RegexMatcher) FindAll(data []byte) MatchSet {
@@ -48,7 +47,7 @@ func (m *RegexMatcher) FindAll(data []byte) MatchSet {
 		return m.findAllInvert(data)
 	}
 
-	locs := m.re.FindAllIndex(data, -1)
+	locs := toLocs2(m.re.FindAllIndex(data, -1))
 	if len(locs) == 0 {
 		return MatchSet{}
 	}

@@ -101,16 +101,12 @@ func (m *AhoCorasickMatcher) buildFailureLinks() {
 	}
 }
 
-// acMatch represents a single pattern match at a byte offset.
-type acMatch struct {
-	patternIdx int
-	offset     int // byte offset in the searched text
-	length     int // length of the matched pattern
-}
-
-// searchLine scans a single line for all pattern matches.
-func (m *AhoCorasickMatcher) searchLine(text []byte) []acMatch {
-	var matches []acMatch
+// searchLocs scans text for all pattern matches, returning [2]int{start, end} pairs.
+// Uses a stack buffer for ≤16 matches to avoid heap allocation on sparse matches.
+func (m *AhoCorasickMatcher) searchLocs(text []byte) [][2]int {
+	var stackBuf [16][2]int
+	n := 0
+	var overflow [][2]int
 	node := m.root
 
 	for i, b := range text {
@@ -118,7 +114,6 @@ func (m *AhoCorasickMatcher) searchLine(text []byte) []acMatch {
 			b = toLower(b)
 		}
 
-		// Follow failure links until we find a matching transition or reach root
 		for node != m.root && node.children[b] == nil {
 			node = node.fail
 		}
@@ -126,27 +121,37 @@ func (m *AhoCorasickMatcher) searchLine(text []byte) []acMatch {
 			node = node.children[b]
 		}
 
-		// Collect all matches at this position
 		if len(node.output) > 0 {
 			for _, pidx := range node.output {
 				plen := len(m.patterns[pidx])
-				matches = append(matches, acMatch{
-					patternIdx: pidx,
-					offset:     i - plen + 1,
-					length:     plen,
-				})
+				loc := [2]int{i - plen + 1, i + 1}
+				if n < len(stackBuf) {
+					stackBuf[n] = loc
+				} else {
+					if overflow == nil {
+						overflow = make([][2]int, 0, 64)
+						overflow = append(overflow, stackBuf[:]...)
+					}
+					overflow = append(overflow, loc)
+				}
+				n++
 			}
 		}
 	}
 
-	return matches
+	if n == 0 {
+		return nil
+	}
+	if overflow != nil {
+		return overflow
+	}
+	result := make([][2]int, n)
+	copy(result, stackBuf[:n])
+	return result
 }
 
-func (m *AhoCorasickMatcher) MatchExists(data []byte) bool {
-	if m.invert {
-		return len(data) > 0
-	}
-	// Walk automaton until first match
+// matchExists walks the automaton until the first match, zero allocations.
+func (m *AhoCorasickMatcher) matchExists(data []byte) bool {
 	node := m.root
 	for _, b := range data {
 		if m.ignoreCase {
@@ -165,23 +170,47 @@ func (m *AhoCorasickMatcher) MatchExists(data []byte) bool {
 	return false
 }
 
+func (m *AhoCorasickMatcher) MatchExists(data []byte) bool {
+	if m.invert {
+		return len(data) > 0
+	}
+	return m.matchExists(data)
+}
+
 func (m *AhoCorasickMatcher) CountAll(data []byte) int {
 	if m.invert {
 		return countInvert(data, func(line []byte) bool {
-			return len(m.searchLine(line)) == 0
+			return !m.matchExists(line)
 		})
 	}
 
-	acMatches := m.searchLine(data)
-	if len(acMatches) == 0 {
-		return 0
+	// Walk automaton and count unique lines directly — zero allocation.
+	node := m.root
+	count := 0
+	lineEnd := -1
+
+	for i, b := range data {
+		if m.ignoreCase {
+			b = toLower(b)
+		}
+		for node != m.root && node.children[b] == nil {
+			node = node.fail
+		}
+		if node.children[b] != nil {
+			node = node.children[b]
+		}
+		if len(node.output) > 0 && i > lineEnd {
+			count++
+			j := bytes.IndexByte(data[i:], '\n')
+			if j >= 0 {
+				lineEnd = i + j
+			} else {
+				lineEnd = len(data)
+			}
+		}
 	}
 
-	locs := make([][]int, len(acMatches))
-	for i, am := range acMatches {
-		locs[i] = []int{am.offset, am.offset + am.length}
-	}
-	return countLocsUniqueLines(data, locs)
+	return count
 }
 
 func (m *AhoCorasickMatcher) FindAll(data []byte) MatchSet {
@@ -189,16 +218,9 @@ func (m *AhoCorasickMatcher) FindAll(data []byte) MatchSet {
 		return m.findAllInvert(data)
 	}
 
-	// Search whole buffer with automaton
-	acMatches := m.searchLine(data)
-	if len(acMatches) == 0 {
+	locs := m.searchLocs(data)
+	if len(locs) == 0 {
 		return MatchSet{}
-	}
-
-	// Convert to locs format for shared line resolution
-	locs := make([][]int, len(acMatches))
-	for i, am := range acMatches {
-		locs[i] = []int{am.offset, am.offset + am.length}
 	}
 	return matchSetFromLocs(data, locs, m.maxCols, m.needLineNums)
 }
@@ -220,7 +242,7 @@ func (m *AhoCorasickMatcher) findAllInvert(data []byte) MatchSet {
 		lineStart := int(offset)
 		line := remaining[:lineLen]
 
-		if len(m.searchLine(line)) == 0 {
+		if !m.matchExists(line) {
 			ms.Matches = append(ms.Matches, Match{
 				LineNum:    lineNum,
 				LineStart:  lineStart,
@@ -242,8 +264,8 @@ func (m *AhoCorasickMatcher) findAllInvert(data []byte) MatchSet {
 }
 
 func (m *AhoCorasickMatcher) FindLine(line []byte, lineNum int, byteOffset int64) (MatchSet, bool) {
-	acMatches := m.searchLine(line)
-	hasMatch := len(acMatches) > 0
+	locs := m.searchLocs(line)
+	hasMatch := len(locs) > 0
 
 	if m.invert {
 		hasMatch = !hasMatch
@@ -262,11 +284,9 @@ func (m *AhoCorasickMatcher) FindLine(line []byte, lineNum int, byteOffset int64
 	}
 	if !m.invert {
 		match.PosIdx = 0
-		match.PosCount = len(acMatches)
-		ms.Positions = make([][2]int, len(acMatches))
-		for i, am := range acMatches {
-			ms.Positions[i] = [2]int{am.offset, am.offset + am.length}
-		}
+		match.PosCount = len(locs)
+		ms.Positions = make([][2]int, len(locs))
+		copy(ms.Positions, locs)
 	}
 	ms.Matches = []Match{match}
 
