@@ -14,8 +14,8 @@ Built vibe coding with [Claude Code](https://claude.com/claude-code).
 
 - **AVX2 SIMD search** — fixed-string patterns use a SIMD-friendly Horspool algorithm that compares 32 byte positions per iteration
 - **Search-then-split** — searches the entire file buffer first, then extracts line boundaries only around matches (avoids per-line overhead)
-- **Memory-mapped I/O** — large files are mmap'd with `MAP_POPULATE` + `MADV_SEQUENTIAL` for zero-copy search
-- **Raw syscalls** — `getdents64`, `openat`, `fstatat`, `pread`, `writev`, `inotify`, `epoll` — no portable Go abstractions
+- **Memory-mapped I/O** — large files are mmap'd with `MADV_SEQUENTIAL` + `FADV_SEQUENTIAL` for zero-copy search (demand-paged, no `MAP_POPULATE`, enabling early exit for `-l` mode)
+- **Raw syscalls** — `getdents64`, `open`, `pread`, `mmap`, `writev`, `inotify`, `epoll` — no portable Go abstractions
 - **Parallel recursive search** — worker pool distributes files across `NumCPU * 2` goroutines with deterministic output ordering
 - **Multiple pattern engines** — Go regex (RE2), PCRE2 (pure Go port), Boyer-Moore with SIMD, Aho-Corasick multi-pattern
 - **Watch mode** — inotify + epoll file watching with log rotation handling

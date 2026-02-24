@@ -4,7 +4,7 @@ gogrep is a Linux-only, high-performance grep alternative written in pure Go. Ev
 
 ## Design Goals
 
-1. **Linux-only** -- use raw syscalls (`getdents64`, `openat`, `mmap`, `fadvise`, `madvise`, `writev`, `inotify`, `epoll`) instead of portable Go abstractions.
+1. **Linux-only** -- use raw syscalls (`getdents64`, `open`, `mmap`, `fadvise`, `madvise`, `writev`, `inotify`, `epoll`) instead of portable Go abstractions.
 2. **SIMD-accelerated** -- fixed-string search uses AVX2 intrinsics via Go 1.26 `simd/archsimd`.
 3. **Search-then-split** -- search the entire file buffer first, then extract line boundaries only around matches. Avoids per-line overhead for files with sparse matches.
 4. **Zero allocations on hot paths** -- `[]byte` everywhere, `sync.Pool` for buffers, no `string` conversions during search.
@@ -15,7 +15,7 @@ gogrep is a Linux-only, high-performance grep alternative written in pure Go. Ev
 ```
                   +-----------+
                   |  CLI      |  cmd/gogrep/main.go
-                  |  (cobra)  |  parses flags, builds Config
+                  |           |  parses flags, builds Config
                   +-----+-----+
                         |
                   +-----v-----+
@@ -29,7 +29,7 @@ gogrep is a Linux-only, high-performance grep alternative written in pure Go. Ev
     +-----v-----+ +----v----+ +------v------+
     |  Walker   | | Reader  | |  Matcher    |
     | getdents  | | mmap /  | | regex / BM  |
-    | + openat  | | pread   | | AC / PCRE   |
+    |           | | pread   | | AC / PCRE   |
     +-----------+ +---------+ |   + SIMD    |
                               +------+------+
                                      |
@@ -54,8 +54,8 @@ In recursive mode, a **Scheduler** (worker pool) sits between the Walker and Mat
 2. Read entries with `unix.Getdents(fd, buf)` into a 32 KB buffer.
 3. Parse raw `linux_dirent64` structs in-place (`unsafe.Pointer`). Each entry's `d_type` field classifies it as `DT_REG`, `DT_DIR`, `DT_LNK`, or `DT_UNKNOWN` without any `stat` syscall.
 4. Regular files: emit path-only `FileEntry{Path}` — file opening and stat are deferred to the reader.
-5. Directories: recurse with a parallel BFS (`NumCPU` walker goroutines). Skip `.git`, `.svn`, `.hg`, `node_modules`, hidden dirs (`.` prefix).
-6. `DT_UNKNOWN` (rare, some filesystems like XFS): fall back to `fstatat` to determine type.
+5. Directories: recurse with a parallel BFS (`NumCPU` walker goroutines). Skip `.git`, `.svn`, `.hg`, `node_modules`, and hidden dirs (`.` prefix) unless `--hidden` is set.
+6. `DT_UNKNOWN` (rare, some filesystems like XFS): fall back to `unix.Stat` to determine type.
 7. `.gitignore` support: loads and stacks ignore rules per directory, matching patterns against relative paths.
 
 **Result**: eliminates one `lstat` per file. On a tree with 100K files, that's 100K fewer syscalls compared to `filepath.WalkDir`.
@@ -76,7 +76,7 @@ In recursive mode, a **Scheduler** (worker pool) sits between the Walker and Mat
 
 1. `unix.Open` with `O_RDONLY | O_NOATIME`.
 2. `unix.Fadvise(fd, 0, size, FADV_SEQUENTIAL)` -- hint the kernel to read ahead aggressively.
-3. `syscall.Mmap(fd, 0, size, PROT_READ, MAP_PRIVATE | MAP_POPULATE)` -- `MAP_POPULATE` prefaults all pages at map time, avoiding page faults during search.
+3. `syscall.Mmap(fd, 0, size, PROT_READ, MAP_PRIVATE)` -- demand-paged (no `MAP_POPULATE`), enabling early exit for `-l` mode without reading the entire file.
 4. `unix.Madvise(data, MADV_SEQUENTIAL)` -- reinforce sequential access hint.
 5. On cleanup: `unix.Madvise(data, MADV_DONTNEED)` to release page cache, then `syscall.Munmap`, then close fd.
 
@@ -90,21 +90,23 @@ An `AdaptiveReader` automatically selects between the two based on a configurabl
 
 ```go
 type Matcher interface {
-    FindAll(data []byte) []Match
+    FindAll(data []byte) MatchSet
     MatchExists(data []byte) bool
-    FindLine(line []byte, lineNum int, byteOffset int64) (Match, bool)
+    CountAll(data []byte) int
+    FindLine(line []byte, lineNum int, byteOffset int64) (MatchSet, bool)
 }
 ```
 
-`MatchExists` provides a fast path for `-l` / `--files-with-matches` mode, skipping line boundary extraction entirely.
+`MatchExists` provides a fast path for `-l` / `--files-with-matches` mode, skipping line boundary extraction entirely. `CountAll` provides a fast path for `-c` / `--count` mode.
 
 ### Selection Logic
 
 | Condition | Matcher | Engine |
 |---|---|---|
 | `-P` (PCRE) | `PCREMatcher` | `go.elara.ws/pcre` (pure Go PCRE2 port) |
-| `-F` + 1 pattern | `BoyerMooreMatcher` | SIMD-friendly Horspool via `simd/archsimd` |
+| `-F` + 1 pattern | `BoyerMooreMatcher` | `bytes.Index` (stdlib AVX2 asm); case-insensitive uses custom SIMD Horspool |
 | `-F` + N patterns | `AhoCorasickMatcher` | Hand-written trie with `[256]*node` children + BFS failure links |
+| Literal pattern (no metacharacters) | `BoyerMooreMatcher` / `AhoCorasickMatcher` | Auto-promoted from regex to fixed-string search |
 | Default (regex) | `RegexMatcher` | Go stdlib `regexp` (RE2) |
 
 ### Search-then-Split
@@ -113,26 +115,29 @@ All matchers search the entire file buffer in a single pass, then extract line b
 
 For a 500K-line file with 3 matches, the old approach made 500K `findInLine()` calls. The new approach makes 1 whole-buffer search + 3 line extractions.
 
-A helper function `lineFromOffset()` efficiently extracts line boundaries and computes line numbers incrementally from a previous known position, avoiding redundant newline counting.
+`snippetFromOffset()` extracts line boundaries around each match offset (clamped by `maxCols`), and `matchSetFromOffsets()` computes line numbers incrementally via `bytes.Count` between consecutive match positions, avoiding redundant newline counting.
 
 ### SIMD Acceleration
 
 `internal/simd/` uses Go 1.26's `simd/archsimd` for AVX2 intrinsics (requires `GOEXPERIMENT=simd`).
 
-The **SIMD-friendly Horspool** algorithm (`simd.IndexAll`):
+For **case-sensitive** search, `simd.IndexAll` delegates to `bytes.Index` which already uses optimized AVX2 assembly internally in the Go runtime.
 
-1. Broadcast pattern's first byte and last byte into 32-byte AVX2 vectors.
+For **case-insensitive** search, `simd.IndexAllCaseInsensitive` uses a custom **SIMD-friendly Horspool** algorithm:
+
+1. Broadcast both lower and upper forms of the pattern's first byte and last byte into 32-byte AVX2 vectors.
 2. For each 32-byte block in the data:
    - Load 32 bytes at position `i` and at position `i + patternLen - 1`.
-   - `VPCMPEQB` to compare all 32 positions against first/last bytes simultaneously.
-   - `VPAND` the two result masks.
+   - `VPCMPEQB` to compare all 32 positions against lower/upper first bytes, OR the masks.
+   - Same for last bytes, OR the masks.
+   - `VPAND` the first and last result masks.
    - `VPMOVMSKB` to extract a 32-bit bitmask of candidate positions.
-3. For each set bit in the bitmask (typically 0-1 per block): verify the middle bytes with `bytes.Equal`.
+3. For each set bit in the bitmask (typically 0-1 per block): verify the middle bytes with case-insensitive comparison.
 4. `VZEROUPPER` before returning to avoid AVX/SSE transition penalties.
 
 This processes 32 candidate positions per iteration. For typical text, the first+last byte filter eliminates >99% of false positives, making the inner verification extremely rare.
 
-Case-insensitive search broadcasts both lower and upper forms of the first/last bytes and ORs the masks.
+Additional SIMD primitives in `internal/simd/simd.go`: `IndexByte`, `LastIndexByte`, `Count`, and `ToLowerASCII`, all using AVX2 `VPCMPEQB` + `VPMOVMSKB` patterns.
 
 ## Output
 
@@ -202,8 +207,7 @@ stdout
 
 | Package | Purpose |
 |---|---|
-| `golang.org/x/sys` | Linux syscalls (getdents, openat, mmap, writev, inotify, epoll) |
-| `github.com/spf13/cobra` | CLI framework |
+| `golang.org/x/sys` | Linux syscalls (getdents, open, mmap, writev, inotify, epoll) |
 | `go.elara.ws/pcre` | Pure Go PCRE2 port (no cgo) |
-| `github.com/charmbracelet/log` | Structured stderr logging |
+| `github.com/sabhiram/go-gitignore` | .gitignore pattern matching |
 | `simd/archsimd` | Go 1.26 experimental AVX2 intrinsics |

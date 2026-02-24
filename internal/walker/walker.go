@@ -360,11 +360,11 @@ func joinPath(dirPath, name string) string {
 }
 
 // skipDir returns true for directories that should be skipped.
-// VCS directories (.git, .svn, .hg) are always skipped.
+// VCS directories (.git, .svn, .hg) and node_modules are always skipped.
 // Other hidden directories are skipped unless hidden is true.
 func skipDir(name string, hidden bool) bool {
 	switch name {
-	case ".git", ".svn", ".hg":
+	case ".git", ".svn", ".hg", "node_modules":
 		return true
 	}
 	if !hidden && len(name) > 0 && name[0] == '.' {

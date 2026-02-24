@@ -7,7 +7,9 @@ gogrep [OPTIONS] PATTERN [FILE...]
 gogrep [OPTIONS] -e PATTERN [-e PATTERN...] [FILE...]
 ```
 
-If no files are given, reads from stdin.
+If no files are given and stdin is a terminal, searches the current directory recursively. If stdin is piped, reads from stdin. Use `--` to separate flags from patterns that start with `-`.
+
+Short flags can be combined: `-rin` is equivalent to `-r -i -n`.
 
 ## Options
 
@@ -19,6 +21,7 @@ If no files are given, reads from stdin.
 | `--fixed-strings` | `-F` | Treat pattern as a literal string, not a regex |
 | `--perl-regexp` | `-P` | Use PCRE2 regex (supports lookahead, lookbehind, backreferences) |
 | `--ignore-case` | `-i` | Case-insensitive matching |
+| `--smart-case` | `-S` | Case-insensitive if pattern is all lowercase |
 | `--invert-match` | `-v` | Select lines that do NOT match |
 
 ### Output Control
@@ -29,6 +32,8 @@ If no files are given, reads from stdin.
 | `--count` | `-c` | Print only a count of matching lines per file |
 | `--files-with-matches` | `-l` | Print only filenames containing matches |
 | `--color MODE` | | Color output: `auto` (default), `always`, `never` |
+| `--colour MODE` | | Alias for `--color` |
+| `--max-columns NUM` | `-M` | Truncate lines longer than NUM bytes (0=auto, -1=no limit) |
 | `--json` | | Output results as JSON Lines |
 
 ### Context
@@ -44,6 +49,10 @@ If no files are given, reads from stdin.
 | Flag | Short | Description |
 |---|---|---|
 | `--recursive` | `-r` | Recursively search directories |
+| `--glob PATTERN` | `-g` | Include/exclude files by glob (prefix `!` to exclude, repeatable) |
+| `--no-ignore` | | Don't respect .gitignore files |
+| `--hidden` | | Search hidden files and directories |
+| `--follow` | `-L` | Follow symbolic links |
 | `--watch` | | Watch files for changes and search new content |
 
 ## Exit Codes
